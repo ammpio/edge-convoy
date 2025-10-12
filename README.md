@@ -57,11 +57,11 @@ Or with debug logging:
 
 ### As a Library
 
-Add to your `Cargo.toml`:
+Add to your `Cargo.toml` (no default features suppresses default CLI dependencies):
 
 ```toml
 [dependencies]
-convoy = "0.1"
+convoy = { version = "0.1", default-features = false }
 ```
 
 **Example usage** (see `examples/programmatic.rs` for a complete example):
