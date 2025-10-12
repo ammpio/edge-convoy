@@ -1,0 +1,64 @@
+[package]
+name = "convoy"
+version = "0.1.0"
+edition = "2024"
+authors = ["Svet Bajlekov <svet.bajlekov@ammp.io>"]
+description = "A reliable MQTT bridge with SQLite message caching - for edge devices with patchy connectivity"
+license = "Apache-2.0"
+repository = "https://github.com/ammpio/edge-convoy"
+homepage = "https://github.com/yammpio/edge-convoy"
+documentation = "https://docs.rs/convoy"
+readme = "README.md"
+keywords = ["mqtt", "bridge", "cache", "iot", "messaging"]
+categories = ["network-programming", "command-line-utilities", "embedded"]
+
+[lib]
+name = "convoy"
+path = "src/lib.rs"
+
+[[bin]]
+name = "convoy"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[features]
+default = ["cli"]
+cli = ["dep:clap", "dep:toml", "dep:tracing-subscriber"]
+
+[dependencies]
+# MQTT client
+rumqttc = { version = "*", default-features = false, features = ["use-native-tls"] }
+
+# SQLite for caching
+rusqlite = { version = "*" }
+
+# Async runtime
+tokio = { version = "*", features = ["full"] }
+
+# Configuration
+serde = { version = "*", features = ["derive"] }
+
+# Logging (core library only uses tracing)
+tracing = "*"
+
+# Error handling
+thiserror = "*"
+
+# TLS
+native-tls = "*"
+
+# Time utilities
+chrono = "*"
+
+
+# Backoff for connection retry
+backoff = { version = "*", features = ["tokio"] }
+
+# CLI-only dependencies
+clap = { version = "*", features = ["derive"], optional = true }
+toml = { version = "*", optional = true }
+tracing-subscriber = { version = "*", features = ["env-filter"], optional = true }
+
+[dev-dependencies]
+tracing-subscriber = { version = "*", features = ["env-filter"] }
+tempfile = "*"

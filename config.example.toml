@@ -1,0 +1,87 @@
+[bridge]
+# Bridge state publishing (LWT on remote broker)
+state_topic = "a/node_123/bridge_state"  # topic on remote broker
+state_online_payload = "1"               # payload when connected
+state_offline_payload = "0"              # LWT payload when disconnected
+
+# Local broker configuration (Broker A)
+[bridge.local]
+addr = "127.0.0.1:1883"
+client_id = "convoy-local"
+keep_alive_secs = 3600
+clean_session = false
+max_inflight = 100
+# username = "local_user"    # optional
+# password = "local_pass"    # optional
+# TLS is supported for local broker as well if needed
+# [bridge.local.tls]
+# ca_file = "/etc/ssl/certs/ca-certificates.crt"
+
+# Remote broker configuration (Broker B)
+[bridge.remote]
+addr = "mqtt.example.com:8883"
+client_id = "convoy-remote"
+keep_alive_secs = 90
+clean_session = false
+username = "edge_device_01"
+password = "secure_password"
+# QoS 1/2 messages allowed in-flight before ack
+# Lower = more durable (fewer messages lost on crash), higher = more throughput
+# With SQLite cache, keep this low (2-10) to maximize reliability
+max_inflight = 2
+
+# TLS for remote connection (native-tls)
+[bridge.remote.tls]
+# CA certificate to verify the remote broker's certificate
+# Use system CA bundle on most Linux systems:
+ca_file = "/etc/ssl/certs/ca-certificates.crt"
+# Or specify a custom CA certificate:
+# ca_file = "/etc/convoy/ca.crt"
+
+# Optional: mTLS with PKCS12 client certificate for mutual authentication
+# client_cert = "/etc/convoy/client.p12"
+# client_password = "password"
+
+# DANGER: Disable certificate verification (INSECURE - for testing only!)
+# danger_accept_invalid_certs = false
+#
+# Note: On macOS, native-tls may not honor custom CA certificates provided via ca_file
+# due to limitations in macOS Security.framework. If you encounter "certificate not trusted"
+# errors with a valid custom CA, you can either:
+# 1. Add the CA to the macOS system keychain (recommended for development)
+# 2. Set danger_accept_invalid_certs = true (insecure, for local testing only)
+# 3. Use a certificate signed by a system-trusted CA (recommended for production)
+
+# Topics to forward LOCAL -> REMOTE (with caching)
+# Maps local topic to <remote_prefix>/<local_topic>
+[[bridge.forward]]
+local_filter = "u/#"
+remote_prefix = "a/node_123/"
+qos = 1
+
+# Topics to forward REMOTE -> LOCAL (no caching)
+# Strips remote_prefix from remote topic before forwarding to local
+[[bridge.subscribe]]
+remote_filter = "a/node_123/d/#"
+remote_prefix = "a/node_123/"  # strip this prefix
+qos = 1
+
+# -------------------------
+# SQLite cache (for A→B only)
+# -------------------------
+
+[cache]
+sqlite_path = "/tmp/cache.db"
+
+# Cache policy
+cache_qos0 = false          # cache QoS0? (default false)
+max_rows   = 500000         # hard cap to avoid unbounded growth
+eviction   = "drop_oldest"  # "drop_oldest" | "reject_new"
+
+# Replay behavior
+flush_batch        = 10     # messages per replay batch
+flush_interval_ms  = 100    # replay tick interval
+busy_timeout_ms    = 5000   # SQLite busy timeout
+
+# SQLite durability
+synchronous = "FULL"        # "FULL" | "NORMAL" | "OFF"

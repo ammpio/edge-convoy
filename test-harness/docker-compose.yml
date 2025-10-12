@@ -1,0 +1,31 @@
+services:
+  local-broker:
+    image: eclipse-mosquitto:2
+    container_name: local-broker
+    ports:
+      - "1883:1883"
+    volumes:
+      - ./mosquitto-local.conf:/mosquitto/config/mosquitto.conf:ro
+    # healthcheck:
+    #   test: ["CMD", "mosquitto_sub", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-W", "3"]
+    #   interval: 5s
+    #   timeout: 3s
+    #   retries: 3
+    #   start_period: 5s
+
+  remote-broker:
+    image: eclipse-mosquitto:2
+    container_name: remote-broker
+    ports:
+      - "8883:8883"
+      - "1884:1884"
+    volumes:
+      - ./mosquitto-remote.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./certs:/mosquitto/certs:ro
+      - ./passwd:/mosquitto/config/passwd:ro
+    # healthcheck:
+    #   test: ["CMD", "mosquitto_sub", "-h", "localhost", "-p", "1884", "-t", "$$SYS/#", "-C", "1", "-i", "healthcheck", "-u", "testuser", "-P", "testpass", "-W", "3"]
+    #   interval: 5s
+    #   timeout: 3s
+    #   retries: 3
+    #   start_period: 5s
