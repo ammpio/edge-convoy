@@ -27,38 +27,38 @@ cli = ["dep:clap", "dep:toml", "dep:tracing-subscriber"]
 
 [dependencies]
 # MQTT client
-rumqttc = { version = "*", default-features = false, features = ["use-native-tls"] }
+rumqttc = { version = ">=0.24", default-features = false, features = ["use-native-tls"] }
 
 # SQLite for caching
-rusqlite = { version = "*" }
+rusqlite = { version = "0.37" }
 
 # Async runtime
-tokio = { version = "*", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
 
 # Configuration
-serde = { version = "*", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
 
 # Logging (core library only uses tracing)
-tracing = "*"
+tracing = "0.1"
 
 # Error handling
-thiserror = "*"
+thiserror = "1"
 
 # TLS
-native-tls = "*"
+native-tls = "0.2"
 
 # Time utilities
-chrono = "*"
+chrono = "0.4"
 
 
 # Backoff for connection retry
-backoff = { version = "*", features = ["tokio"] }
+backoff = { version = "0.4", features = ["tokio"] }
 
 # CLI-only dependencies
-clap = { version = "*", features = ["derive"], optional = true }
-toml = { version = "*", optional = true }
-tracing-subscriber = { version = "*", features = ["env-filter"], optional = true }
+clap = { version = "4", features = ["derive"], optional = true }
+toml = { version = "0.9", optional = true }
+tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 
 [dev-dependencies]
-tracing-subscriber = { version = "*", features = ["env-filter"] }
-tempfile = "*"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tempfile = "3"
