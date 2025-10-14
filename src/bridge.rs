@@ -167,6 +167,7 @@ impl Bridge {
             Ok(_) => {}
             Err(e) => {
                 error!("Local connection error: {}", e);
+                tokio::time::sleep(Duration::from_secs(1)).await;
             }
         }
         Ok(())
