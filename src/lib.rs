@@ -83,6 +83,7 @@ pub mod config;
 pub mod error;
 pub mod replay;
 pub mod topic;
+pub mod util;
 
 // Re-export main types for convenient access
 pub use bridge::Bridge;

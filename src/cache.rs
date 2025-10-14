@@ -2,6 +2,7 @@
 
 use crate::config::{CacheConfig, EvictionPolicy, SynchronousMode};
 use crate::error::{BridgeError, Result};
+use crate::util::payload_hash;
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -152,15 +153,14 @@ impl CacheManager {
 
         let conn = self.conn.lock().unwrap();
 
-        // Check if we need to evict
-        if self.config.max_rows > 0 {
-            let count: i64 =
-                conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
+        let row_count: i64 =
+        conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
 
-            if count >= self.config.max_rows as i64 {
+        // Check if we need to evict
+        if self.config.max_rows > 0 && row_count >= self.config.max_rows as i64 {
                 match self.config.eviction {
                     EvictionPolicy::DropOldest => {
-                        let to_delete = count - self.config.max_rows as i64 + 1;
+                        let to_delete = row_count - self.config.max_rows as i64 + 1;
                         conn.execute(
                             "DELETE FROM msg_queue WHERE id IN (
                                 SELECT id FROM msg_queue ORDER BY id LIMIT ?1
@@ -180,7 +180,6 @@ impl CacheManager {
                         )));
                     }
                 }
-            }
         }
 
         // Insert the message
@@ -191,12 +190,14 @@ impl CacheManager {
             params![topic, payload, qos, retain as i32, ts_enqueued],
         )?;
 
-        debug!(
-            "Enqueued message: topic={:?}, qos={}, size={}",
+        info!(
+            "Enqueued message: topic={:?}, qos={}, size={}, hash={}",
             String::from_utf8_lossy(topic),
             qos,
-            payload.len()
+            payload.len(),
+            payload_hash(payload)
         );
+        debug!("Queue size: {}", row_count + 1);
 
         Ok(())
     }

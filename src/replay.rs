@@ -1,10 +1,11 @@
 use crate::cache::CacheManager;
+use crate::util::payload_hash;
 use chrono;
 use rumqttc::{AsyncClient, QoS};
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 use tokio::time::{Duration, sleep};
-use tracing::{debug, error, info, warn};
+use tracing::{trace, debug, error, info, warn};
 
 pub async fn replay_worker(
     cache: Arc<CacheManager>,
@@ -22,7 +23,7 @@ pub async fn replay_worker(
     loop {
         // Wait for remote to be connected
         while !*remote_connected.read().await {
-            debug!("Replay worker waiting for remote connection...");
+            trace!("Replay worker waiting for remote connection...");
             sleep(Duration::from_secs(1)).await;
         }
 
@@ -90,9 +91,9 @@ pub async fn replay_worker(
                     .await
                 {
                     Ok(_) => {
-                        debug!(
-                            "Replayed message: {} (id={}, delay={}s)",
-                            topic, msg.id, delay_seconds
+                        info!(
+                            "Replayed message: {} (id={}, delay={}s, hash={})",
+                            topic, msg.id, delay_seconds, payload_hash(&msg.payload)
                         );
 
                         // Delete from cache after successful publish

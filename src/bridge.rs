@@ -3,6 +3,7 @@
 use crate::cache::CacheManager;
 use crate::config::{BridgeConfig, BrokerConfig};
 use crate::error::Result;
+use crate::util::payload_hash;
 use crate::topic::{apply_forward_mapping, apply_subscribe_mapping, topic_matches_filter};
 use backoff::{ExponentialBackoff, backoff::Backoff};
 use rumqttc::{
@@ -225,7 +226,11 @@ impl Bridge {
 
     async fn handle_local_publish(&self, publish: Publish) -> Result<()> {
         let topic = publish.topic.clone();
-        debug!("Received from local: {}", topic);
+        debug!(
+            "Received from local: {} (hash={})",
+            topic,
+            payload_hash(&publish.payload)
+        );
 
         // Find matching forward rule
         for rule in &self.config.forward {
@@ -244,7 +249,12 @@ impl Bridge {
                         .await
                     {
                         Ok(_) => {
-                            debug!("Forwarded to remote: {} -> {}", topic, remote_topic);
+                            debug!(
+                                "Forwarded to remote: {} -> {} (hash={})",
+                                topic,
+                                remote_topic,
+                                payload_hash(&publish.payload)
+                            );
                         }
                         Err(e) => {
                             warn!("Failed to publish to remote: {}, caching", e);
@@ -266,7 +276,11 @@ impl Bridge {
 
     async fn handle_remote_publish(&self, publish: Publish) -> Result<()> {
         let topic = publish.topic.clone();
-        debug!("Received from remote: {}", topic);
+        debug!(
+            "Received from remote: {} (hash={})",
+            topic,
+            payload_hash(&publish.payload)
+        );
 
         // Find matching subscribe rule
         for rule in &self.config.subscribe {
@@ -283,7 +297,12 @@ impl Bridge {
                         {
                             warn!("Failed to publish to local: {}", e);
                         } else {
-                            debug!("Forwarded to local: {} -> {}", topic, local_topic);
+                            debug!(
+                                "Forwarded to local: {} -> {} (hash={})",
+                                topic,
+                                local_topic,
+                                payload_hash(&publish.payload)
+                            );
                         }
                     }
                     Err(e) => {
