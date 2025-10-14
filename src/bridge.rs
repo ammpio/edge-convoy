@@ -3,6 +3,7 @@
 use crate::cache::CacheManager;
 use crate::config::{BridgeConfig, BrokerConfig};
 use crate::error::Result;
+use crate::replay::replay_worker;
 use crate::topic::{apply_forward_mapping, apply_subscribe_mapping, topic_matches_filter};
 use crate::util::payload_hash;
 use backoff::{ExponentialBackoff, backoff::Backoff};
@@ -75,9 +76,6 @@ impl Bridge {
     }
 
     pub async fn run(mut self) -> Result<()> {
-        // Subscribe to topics on both brokers
-        self.subscribe_topics().await?;
-
         // Spawn replay worker
         let replay_handle = tokio::spawn({
             let cache = Arc::clone(&self.cache);
@@ -88,7 +86,7 @@ impl Bridge {
             let flush_interval_ms = self.cache.config.flush_interval_ms;
 
             async move {
-                crate::replay::replay_worker(
+                replay_worker(
                     cache,
                     remote_client,
                     remote_connected,
@@ -137,8 +135,8 @@ impl Bridge {
         }
     }
 
-    async fn subscribe_topics(&self) -> Result<()> {
-        // Subscribe to local topics (for forwarding to remote)
+    /// Subscribe to local topics (for forwarding to remote)
+        async fn subscribe_local_topics(&self) -> Result<()> {
         for rule in &self.config.forward {
             let qos = qos_from_u8(rule.qos);
             self.local_client.subscribe(&rule.local_filter, qos).await?;
@@ -147,8 +145,11 @@ impl Bridge {
                 rule.local_filter, rule.qos
             );
         }
+        Ok(())
+    }
 
-        // Subscribe to remote topics (for forwarding to local)
+    /// Subscribe to remote topics (for forwarding to local)
+    async fn subscribe_remote_topics(&self) -> Result<()> {
         for rule in &self.config.subscribe {
             let qos = qos_from_u8(rule.qos);
             self.remote_client
@@ -173,6 +174,7 @@ impl Bridge {
             }
             Ok(Event::Incoming(Incoming::ConnAck(_))) => {
                 info!("Connected to local broker");
+                self.subscribe_local_topics().await?;
             }
             Ok(Event::Incoming(Incoming::Disconnect)) => {
                 warn!("Disconnected from local broker");
@@ -210,6 +212,8 @@ impl Bridge {
                     )
                     .await?;
                 info!("Published online state to {}", self.config.state_topic);
+
+                self.subscribe_remote_topics().await?;
 
                 // Trigger replay worker
                 self.replay_trigger.notify_one();
