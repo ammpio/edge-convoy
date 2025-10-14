@@ -27,7 +27,8 @@ async fn main() {
 
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
-        .with_target(false)
+        .without_time()
+        .compact()
         .init();
 
     info!("Convoy MQTT Bridge starting...");
