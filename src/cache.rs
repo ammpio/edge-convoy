@@ -154,32 +154,32 @@ impl CacheManager {
         let conn = self.conn.lock().unwrap();
 
         let row_count: i64 =
-        conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
+            conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
 
         // Check if we need to evict
         if self.config.max_rows > 0 && row_count >= self.config.max_rows as i64 {
-                match self.config.eviction {
-                    EvictionPolicy::DropOldest => {
-                        let to_delete = row_count - self.config.max_rows as i64 + 1;
-                        conn.execute(
-                            "DELETE FROM msg_queue WHERE id IN (
+            match self.config.eviction {
+                EvictionPolicy::DropOldest => {
+                    let to_delete = row_count - self.config.max_rows as i64 + 1;
+                    conn.execute(
+                        "DELETE FROM msg_queue WHERE id IN (
                                 SELECT id FROM msg_queue ORDER BY id LIMIT ?1
                             )",
-                            params![to_delete],
-                        )?;
-                        debug!("Evicted {} oldest messages", to_delete);
-                    }
-                    EvictionPolicy::RejectNew => {
-                        warn!(
-                            "Cache full, rejecting new message (max_rows={})",
-                            self.config.max_rows
-                        );
-                        return Err(BridgeError::CacheFull(format!(
-                            "Cache at max_rows limit: {}",
-                            self.config.max_rows
-                        )));
-                    }
+                        params![to_delete],
+                    )?;
+                    debug!("Evicted {} oldest messages", to_delete);
                 }
+                EvictionPolicy::RejectNew => {
+                    warn!(
+                        "Cache full, rejecting new message (max_rows={})",
+                        self.config.max_rows
+                    );
+                    return Err(BridgeError::CacheFull(format!(
+                        "Cache at max_rows limit: {}",
+                        self.config.max_rows
+                    )));
+                }
+            }
         }
 
         // Insert the message

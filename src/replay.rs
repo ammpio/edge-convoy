@@ -5,7 +5,7 @@ use rumqttc::{AsyncClient, QoS};
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
 use tokio::time::{Duration, sleep};
-use tracing::{trace, debug, error, info, warn};
+use tracing::{debug, error, info, trace, warn};
 
 pub async fn replay_worker(
     cache: Arc<CacheManager>,
@@ -93,7 +93,10 @@ pub async fn replay_worker(
                     Ok(_) => {
                         info!(
                             "Replayed message: {} (id={}, delay={}s, hash={})",
-                            topic, msg.id, delay_seconds, payload_hash(&msg.payload)
+                            topic,
+                            msg.id,
+                            delay_seconds,
+                            payload_hash(&msg.payload)
                         );
 
                         // Delete from cache after successful publish

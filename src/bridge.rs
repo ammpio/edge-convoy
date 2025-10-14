@@ -3,8 +3,8 @@
 use crate::cache::CacheManager;
 use crate::config::{BridgeConfig, BrokerConfig};
 use crate::error::Result;
-use crate::util::payload_hash;
 use crate::topic::{apply_forward_mapping, apply_subscribe_mapping, topic_matches_filter};
+use crate::util::payload_hash;
 use backoff::{ExponentialBackoff, backoff::Backoff};
 use rumqttc::{
     AsyncClient, Event, EventLoop, Incoming, LastWill, MqttOptions, Publish, QoS, Transport,
