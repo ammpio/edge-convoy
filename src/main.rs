@@ -52,7 +52,7 @@ async fn main() {
     };
 
     // Show cache status
-    match cache.count() {
+    match cache.count().await {
         Ok(count) if count > 0 => {
             info!("Cache contains {} messages from previous session", count);
         }

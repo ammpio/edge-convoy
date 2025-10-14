@@ -144,6 +144,7 @@ async fn wait_for_message(
 fn init_tracing() {
     let _ = tracing_subscriber::fmt()
         .with_env_filter("convoy=debug,integration_test=debug")
+        .without_time()
         .try_init();
 }
 
@@ -506,7 +507,7 @@ async fn test_caching_and_replay() {
 
             tokio::time::sleep(Duration::from_secs(1)).await;
 
-            let cached_count = cache.count().unwrap();
+            let cached_count = cache.count().await.unwrap();
             println!("\nCached messages: {}", cached_count);
             assert!(
                 cached_count >= 3,
@@ -574,7 +575,7 @@ async fn test_caching_and_replay() {
 
             tokio::time::sleep(Duration::from_secs(2)).await;
 
-            let final_cached_count = cache.count().unwrap();
+            let final_cached_count = cache.count().await.unwrap();
             println!("\nFinal cached messages: {}", final_cached_count);
 
             assert!(

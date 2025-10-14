@@ -28,7 +28,7 @@ pub async fn replay_worker(
         }
 
         // Check if cache has messages
-        let count = match cache.count() {
+        let count = match cache.count().await {
             Ok(c) => c,
             Err(e) => {
                 error!("Failed to get cache count: {}", e);
@@ -61,7 +61,7 @@ pub async fn replay_worker(
             }
 
             // Dequeue batch
-            let messages = match cache.dequeue_batch(flush_batch) {
+            let messages = match cache.dequeue_batch(flush_batch).await {
                 Ok(msgs) => msgs,
                 Err(e) => {
                     error!("Failed to dequeue messages: {}", e);
@@ -100,7 +100,7 @@ pub async fn replay_worker(
                         );
 
                         // Delete from cache after successful publish
-                        if let Err(e) = cache.delete_message(msg.id) {
+                        if let Err(e) = cache.delete_message(msg.id).await {
                             error!("Failed to delete message {}: {}", msg.id, e);
                         }
                     }
@@ -120,7 +120,7 @@ pub async fn replay_worker(
         }
 
         // Check final count
-        match cache.count() {
+        match cache.count().await {
             Ok(0) => {
                 info!("All cached messages replayed successfully");
             }

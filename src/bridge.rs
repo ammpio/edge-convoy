@@ -136,7 +136,7 @@ impl Bridge {
     }
 
     /// Subscribe to local topics (for forwarding to remote)
-        async fn subscribe_local_topics(&self) -> Result<()> {
+    async fn subscribe_local_topics(&self) -> Result<()> {
         for rule in &self.config.forward {
             let qos = qos_from_u8(rule.qos);
             self.local_client.subscribe(&rule.local_filter, qos).await?;
@@ -274,13 +274,13 @@ impl Bridge {
                         }
                         Err(e) => {
                             warn!("Failed to publish to remote: {}, caching", e);
-                            self.cache_message(&remote_topic, &publish, qos_num)?;
+                            self.cache_message(&remote_topic, &publish, qos_num).await?;
                         }
                     }
                 } else {
                     // Remote not connected, cache the message
                     debug!("Remote disconnected, caching message");
-                    self.cache_message(&remote_topic, &publish, qos_num)?;
+                    self.cache_message(&remote_topic, &publish, qos_num).await?;
                 }
 
                 break;
@@ -333,9 +333,10 @@ impl Bridge {
         Ok(())
     }
 
-    fn cache_message(&self, topic: &str, publish: &Publish, qos: u8) -> Result<()> {
+    async fn cache_message(&self, topic: &str, publish: &Publish, qos: u8) -> Result<()> {
         self.cache
-            .enqueue(topic.as_bytes(), &publish.payload, qos, publish.retain)?;
+            .enqueue(topic.as_bytes(), &publish.payload, qos, publish.retain)
+            .await?;
         Ok(())
     }
 }

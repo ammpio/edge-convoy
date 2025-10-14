@@ -5,7 +5,8 @@ use crate::error::{BridgeError, Result};
 use crate::util::payload_hash;
 use rusqlite::{Connection, params};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
 
 /// A cached MQTT message awaiting delivery to the remote broker.
@@ -130,18 +131,21 @@ impl CacheManager {
     ///
     /// ```no_run
     /// # use convoy::{CacheManager, CacheConfig};
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), convoy::BridgeError> {
     /// # let cache = CacheManager::new(CacheConfig::default())?;
-    /// cache.enqueue(b"sensors/temp", b"23.5", 1, false)?;
-    /// # Ok::<(), convoy::BridgeError>(())
+    /// cache.enqueue(b"sensors/temp", b"23.5", 1, false).await?;
+    /// # Ok(())
+    /// # }
     /// ```
-    pub fn enqueue(&self, topic: &[u8], payload: &[u8], qos: u8, retain: bool) -> Result<()> {
+    pub async fn enqueue(&self, topic: &[u8], payload: &[u8], qos: u8, retain: bool) -> Result<()> {
         // Skip QoS 0 messages if configured
         if qos == 0 && !self.config.cache_qos0 {
             debug!("Skipping QoS 0 message (cache_qos0=false)");
             return Ok(());
         }
 
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().await;
 
         let row_count: usize =
             conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
@@ -204,8 +208,8 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if database operations fail.
-    pub fn dequeue_batch(&self, limit: usize) -> Result<Vec<CachedMessage>> {
-        let conn = self.conn.lock().unwrap();
+    pub async fn dequeue_batch(&self, limit: usize) -> Result<Vec<CachedMessage>> {
+        let conn = self.conn.lock().await;
 
         let mut stmt = conn.prepare(
             "SELECT id, topic, payload, qos, retain, ts_enqueued
@@ -237,8 +241,8 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if database operations fail.
-    pub fn delete_message(&self, id: i64) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+    pub async fn delete_message(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().await;
         conn.execute("DELETE FROM msg_queue WHERE id = ?1", [id])?;
         Ok(())
     }
@@ -248,8 +252,8 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if database operations fail.
-    pub fn count(&self) -> Result<usize> {
-        let conn = self.conn.lock().unwrap();
+    pub async fn count(&self) -> Result<usize> {
+        let conn = self.conn.lock().await;
         let count: usize =
             conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
         Ok(count)
@@ -260,8 +264,8 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if database operations fail.
-    pub fn is_empty(&self) -> Result<bool> {
-        Ok(self.count()? == 0)
+    pub async fn is_empty(&self) -> Result<bool> {
+        Ok(self.count().await? == 0)
     }
 
     /// Clear all cached messages.
@@ -271,8 +275,8 @@ impl CacheManager {
     /// # Errors
     ///
     /// Returns an error if database operations fail.
-    pub fn clear(&self) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+    pub async fn clear(&self) -> Result<()> {
+        let conn = self.conn.lock().await;
         conn.execute("DELETE FROM msg_queue", [])?;
         info!("Cache cleared");
         Ok(())
