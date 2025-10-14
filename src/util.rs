@@ -12,7 +12,7 @@ use std::hash::{Hash, Hasher};
 /// # Examples
 ///
 /// ```
-/// use convoy::payload_hash;
+/// use convoy::util::payload_hash;
 ///
 /// let hash1 = payload_hash(b"test message");
 /// let hash2 = payload_hash(b"test message");

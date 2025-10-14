@@ -29,7 +29,9 @@ pub struct Bridge {
 }
 
 impl Bridge {
-    pub async fn new(config: BridgeConfig, cache: Arc<CacheManager>) -> Result<Self> {
+    pub async fn new(config: BridgeConfig, cache: CacheManager) -> Result<Self> {
+        let cache = Arc::new(cache);
+
         // Create local MQTT client
         let (local_client, local_eventloop) = create_mqtt_client(&config.local, None)?;
 
@@ -60,6 +62,16 @@ impl Bridge {
             remote_backoff,
             remote_backoff_until: None,
         })
+    }
+
+    /// Get a cloned reference to the cache manager.
+    ///
+    /// Returns an `Arc<CacheManager>` that can be used to inspect cache state,
+    /// which is particularly useful in tests.
+    ///
+    /// This method only clones the `Arc`, not the underlying cache data.
+    pub fn cache(&self) -> Arc<CacheManager> {
+        Arc::clone(&self.cache)
     }
 
     pub async fn run(mut self) -> Result<()> {

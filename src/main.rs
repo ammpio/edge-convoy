@@ -1,6 +1,5 @@
 use clap::Parser;
 use convoy::{Bridge, CacheManager, Config};
-use std::sync::Arc;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -45,7 +44,7 @@ async fn main() {
 
     // Initialize cache
     let cache = match CacheManager::new(config.cache.clone()) {
-        Ok(c) => Arc::new(c),
+        Ok(c) => c,
         Err(e) => {
             error!("Failed to initialize cache: {}", e);
             std::process::exit(1);

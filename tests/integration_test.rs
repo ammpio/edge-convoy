@@ -2,7 +2,6 @@ use convoy::{
     Bridge, BridgeConfig, BrokerConfig, CacheConfig, CacheManager, ForwardRule, SubscribeRule,
 };
 use rumqttc::{AsyncClient, Event, EventLoop, Incoming, MqttOptions, Publish, QoS};
-use std::sync::Arc;
 use std::time::Duration;
 use tempfile::TempDir;
 use tokio::task::LocalSet;
@@ -196,7 +195,7 @@ async fn test_basic_forwarding_local_to_remote() {
                 ..Default::default()
             };
 
-            let cache = Arc::new(CacheManager::new(cache_config).unwrap());
+            let cache = CacheManager::new(cache_config).unwrap();
             let bridge = Bridge::new(bridge_config, cache).await.unwrap();
 
             let bridge_handle = tokio::task::spawn_local(async move {
@@ -310,7 +309,7 @@ async fn test_subscribe_forwarding_remote_to_local() {
                 ..Default::default()
             };
 
-            let cache = Arc::new(CacheManager::new(cache_config).unwrap());
+            let cache = CacheManager::new(cache_config).unwrap();
             let bridge = Bridge::new(bridge_config, cache).await.unwrap();
 
             let bridge_handle = tokio::task::spawn_local(async move {
@@ -434,8 +433,9 @@ async fn test_caching_and_replay() {
                 ..Default::default()
             };
 
-            let cache = Arc::new(CacheManager::new(cache_config).unwrap());
-            let bridge = Bridge::new(bridge_config, cache.clone()).await.unwrap();
+            let cache_manager = CacheManager::new(cache_config).unwrap();
+            let bridge = Bridge::new(bridge_config, cache_manager).await.unwrap();
+            let cache = bridge.cache(); // Get Arc before moving bridge
 
             let bridge_handle = tokio::task::spawn_local(async move {
                 bridge.run().await.unwrap();

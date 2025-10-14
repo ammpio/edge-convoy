@@ -15,7 +15,6 @@
 //!
 //! ```no_run
 //! use convoy::{BridgeConfig, BrokerConfig, CacheConfig, ForwardRule, TlsConfig, Bridge};
-//! use std::sync::Arc;
 //!
 //! #[tokio::main]
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -67,7 +66,7 @@
 //!     };
 //!
 //!     // Create cache manager
-//!     let cache = Arc::new(convoy::CacheManager::new(cache_config)?);
+//!     let cache = convoy::CacheManager::new(cache_config)?;
 //!
 //!     // Create and run bridge
 //!     let bridge = Bridge::new(bridge_config, cache).await?;
