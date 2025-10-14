@@ -33,7 +33,7 @@ rumqttc = { version = ">=0.24", default-features = false, features = ["use-nativ
 rusqlite = { version = "0.37" }
 
 # Async runtime
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "signal"] }
 
 # Configuration
 serde = { version = "1", features = ["derive"] }
