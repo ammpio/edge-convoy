@@ -104,16 +104,6 @@ impl CacheManager {
             [],
         )?;
 
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_queue_fifo ON msg_queue(id)",
-            [],
-        )?;
-
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_queue_topic ON msg_queue(topic)",
-            [],
-        )?;
-
         info!("SQLite cache initialized at {:?}", config.sqlite_path);
         Ok(conn)
     }
