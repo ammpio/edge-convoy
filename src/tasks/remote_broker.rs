@@ -1,7 +1,7 @@
 #![allow(clippy::result_large_err)]
 
-use crate::tasks::messages::{RemoteCommand, RemoteEvent};
 use crate::config::BrokerConfig;
+use crate::tasks::messages::{RemoteCommand, RemoteEvent};
 use rumqttc::{AsyncClient, Event, EventLoop, Incoming, LastWill, MqttOptions, QoS, Transport};
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
@@ -152,7 +152,9 @@ fn recreate_eventloop(
     let (host, port) = parse_broker_addr(&broker_config.addr);
     let mut mqttoptions = MqttOptions::new(&broker_config.client_id, host, port);
 
-    mqttoptions.set_keep_alive(std::time::Duration::from_secs(broker_config.keep_alive_secs as u64));
+    mqttoptions.set_keep_alive(std::time::Duration::from_secs(
+        broker_config.keep_alive_secs as u64,
+    ));
     mqttoptions.set_clean_session(broker_config.clean_session);
     mqttoptions.set_inflight(broker_config.max_inflight);
 
@@ -180,7 +182,9 @@ fn recreate_eventloop(
             tls_builder.danger_accept_invalid_certs(true);
         }
 
-        if let Some(ca_file) = &tls_config.ca_file && ca_file.exists() {
+        if let Some(ca_file) = &tls_config.ca_file
+            && ca_file.exists()
+        {
             let ca_cert_data = std::fs::read(ca_file)?;
             let cert = native_tls::Certificate::from_pem(&ca_cert_data)?;
             tls_builder.add_root_certificate(cert);

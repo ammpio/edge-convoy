@@ -1,5 +1,5 @@
-use crate::cache::CachedMessage;
 use crate::error::Result;
+use crate::tasks::cache::CachedMessage;
 use rumqttc::QoS;
 use tokio::sync::oneshot;
 
@@ -9,7 +9,10 @@ use tokio::sync::oneshot;
 
 #[derive(Debug)]
 pub enum LocalCommand {
-    Subscribe { topic: String, qos: QoS },
+    Subscribe {
+        topic: String,
+        qos: QoS,
+    },
     Publish {
         topic: String,
         payload: Vec<u8>,
@@ -37,7 +40,10 @@ pub enum LocalEvent {
 
 #[derive(Debug)]
 pub enum RemoteCommand {
-    Subscribe { topic: String, qos: QoS },
+    Subscribe {
+        topic: String,
+        qos: QoS,
+    },
     Publish {
         topic: String,
         payload: Vec<u8>,

@@ -1,19 +1,16 @@
 #![allow(clippy::result_large_err)]
 
-use crate::cache::CacheManager;
-use crate::config::{BridgeConfig, BrokerConfig};
+use crate::config::{BridgeConfig, BrokerConfig, CacheConfig};
 use crate::error::Result;
-use rumqttc::{
-    AsyncClient, EventLoop, LastWill, MqttOptions, QoS, Transport,
-};
-use std::sync::Arc;
+use rumqttc::{AsyncClient, EventLoop, LastWill, MqttOptions, QoS, Transport};
 use std::time::Duration;
 use tracing::{debug, info, warn};
 
+use crate::tasks::{cache, local_broker, remote_broker, replay, router};
+
 pub struct Bridge {
     config: BridgeConfig,
-    cache: Arc<CacheManager>,
-    cache_config: crate::config::CacheConfig,
+    cache_config: CacheConfig,
     local_client: AsyncClient,
     remote_client: AsyncClient,
     local_eventloop: EventLoop,
@@ -21,10 +18,7 @@ pub struct Bridge {
 }
 
 impl Bridge {
-    pub async fn new(config: BridgeConfig, cache: CacheManager) -> Result<Self> {
-        let cache_config = cache.config.clone();
-        let cache = Arc::new(cache);
-
+    pub async fn new(config: BridgeConfig, cache_config: CacheConfig) -> Result<Self> {
         // Create local MQTT client
         let (local_client, local_eventloop) = create_mqtt_client(&config.local, None)?;
 
@@ -39,7 +33,6 @@ impl Bridge {
 
         Ok(Self {
             config,
-            cache,
             cache_config,
             local_client,
             local_eventloop,
@@ -48,23 +41,10 @@ impl Bridge {
         })
     }
 
-    /// Get a cloned reference to the cache manager.
-    ///
-    /// Returns an `Arc<CacheManager>` that can be used to inspect cache state,
-    /// which is particularly useful in tests.
-    ///
-    /// This method only clones the `Arc`, not the underlying cache data.
-    pub fn cache(&self) -> Arc<CacheManager> {
-        Arc::clone(&self.cache)
-    }
-
     pub async fn run(self) -> Result<()> {
-        use crate::tasks::*;
-
         // Extract fields we need
         let Bridge {
             config,
-            cache: _,  // CacheManager not used in new architecture
             cache_config,
             local_client,
             remote_client,
@@ -106,10 +86,7 @@ impl Bridge {
         ));
 
         // Spawn cache task
-        tokio::spawn(cache::cache_task(
-            cache_config.clone(),
-            cache_cmd_rx,
-        ));
+        tokio::spawn(cache::cache_task(cache_config.clone(), cache_cmd_rx));
 
         // Spawn replay task
         tokio::spawn(replay::replay_task(
@@ -134,7 +111,6 @@ impl Bridge {
 
         Ok(())
     }
-
 }
 
 fn create_mqtt_client(

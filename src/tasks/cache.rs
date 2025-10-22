@@ -1,6 +1,5 @@
 #![allow(clippy::result_large_err)]
 
-use crate::cache::CachedMessage;
 use crate::config::{CacheConfig, EvictionPolicy, SynchronousMode};
 use crate::error::Result;
 use crate::tasks::messages::CacheCommand;
@@ -8,18 +7,35 @@ use crate::util::payload_hash;
 use rusqlite::{Connection, params};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
+
+/// A cached MQTT message awaiting delivery to the remote broker.
+///
+/// Messages are stored in SQLite with metadata to support FIFO replay
+/// and delay tracking for debugging.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CachedMessage {
+    /// Unique message ID (autoincrement)
+    pub id: i64,
+    /// MQTT topic as bytes
+    pub topic: Vec<u8>,
+    /// Message payload as bytes
+    pub payload: Vec<u8>,
+    /// QoS level (0, 1, or 2)
+    pub qos: u8,
+    /// Whether message should be retained
+    pub retain: bool,
+    /// Unix timestamp when message was enqueued
+    pub ts_enqueued: i64,
+}
 
 /// Cache task that owns the SQLite connection and handles all database operations.
 ///
 /// All blocking rusqlite operations are wrapped in `spawn_blocking` to avoid blocking
 /// the async runtime. The connection is wrapped in Arc<Mutex<>> to allow moving into
 /// spawn_blocking closures.
-pub async fn cache_task(
-    config: CacheConfig,
-    mut command_rx: mpsc::Receiver<CacheCommand>,
-) {
+pub async fn cache_task(config: CacheConfig, mut command_rx: mpsc::Receiver<CacheCommand>) {
     // Open database connection
     let conn = match open_database(&config) {
         Ok(conn) => Arc::new(Mutex::new(conn)),
@@ -47,36 +63,44 @@ pub async fn cache_task(
                     enqueue(&conn, &config, &topic, &payload, qos, retain)
                 })
                 .await
-                .unwrap_or_else(|e| Err(crate::error::BridgeError::Io(std::io::Error::other(
-                    format!("spawn_blocking panicked: {}", e),
-                ))));
+                .unwrap_or_else(|e| {
+                    Err(crate::error::BridgeError::Io(std::io::Error::other(
+                        format!("spawn_blocking panicked: {}", e),
+                    )))
+                });
                 let _ = response.send(result);
             }
             CacheCommand::DequeueBatch { limit, response } => {
                 let conn = Arc::clone(&conn);
                 let result = tokio::task::spawn_blocking(move || dequeue_batch(&conn, limit))
                     .await
-                    .unwrap_or_else(|e| Err(crate::error::BridgeError::Io(std::io::Error::other(
-                        format!("spawn_blocking panicked: {}", e),
-                    ))));
+                    .unwrap_or_else(|e| {
+                        Err(crate::error::BridgeError::Io(std::io::Error::other(
+                            format!("spawn_blocking panicked: {}", e),
+                        )))
+                    });
                 let _ = response.send(result);
             }
             CacheCommand::DeleteBatch { ids, response } => {
                 let conn = Arc::clone(&conn);
                 let result = tokio::task::spawn_blocking(move || delete_batch(&conn, &ids))
                     .await
-                    .unwrap_or_else(|e| Err(crate::error::BridgeError::Io(std::io::Error::other(
-                        format!("spawn_blocking panicked: {}", e),
-                    ))));
+                    .unwrap_or_else(|e| {
+                        Err(crate::error::BridgeError::Io(std::io::Error::other(
+                            format!("spawn_blocking panicked: {}", e),
+                        )))
+                    });
                 let _ = response.send(result);
             }
             CacheCommand::Count { response } => {
                 let conn = Arc::clone(&conn);
                 let result = tokio::task::spawn_blocking(move || count(&conn))
                     .await
-                    .unwrap_or_else(|e| Err(crate::error::BridgeError::Io(std::io::Error::other(
-                        format!("spawn_blocking panicked: {}", e),
-                    ))));
+                    .unwrap_or_else(|e| {
+                        Err(crate::error::BridgeError::Io(std::io::Error::other(
+                            format!("spawn_blocking panicked: {}", e),
+                        )))
+                    });
                 let _ = response.send(result);
             }
         }
@@ -141,7 +165,8 @@ fn enqueue(
     // Lock is synchronous - we're already in spawn_blocking
     let conn = conn.blocking_lock();
 
-    let row_count: usize = conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
+    let row_count: usize =
+        conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
 
     // Check if we need to evict
     if config.max_rows > 0 && row_count >= config.max_rows {
@@ -223,16 +248,12 @@ fn delete_batch(conn: &Arc<Mutex<Connection>>, ids: &[i64]) -> Result<()> {
     let conn = conn.blocking_lock();
 
     // Build query with placeholders
-    let placeholders = ids.iter()
-        .map(|_| "?")
-        .collect::<Vec<_>>()
-        .join(",");
+    let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
     let query_str = format!("DELETE FROM msg_queue WHERE id IN ({})", placeholders);
 
     let mut stmt = conn.prepare(&query_str)?;
-    let params: Vec<&dyn rusqlite::ToSql> = ids.iter()
-        .map(|id| id as &dyn rusqlite::ToSql)
-        .collect();
+    let params: Vec<&dyn rusqlite::ToSql> =
+        ids.iter().map(|id| id as &dyn rusqlite::ToSql).collect();
     stmt.execute(params.as_slice())?;
 
     Ok(())

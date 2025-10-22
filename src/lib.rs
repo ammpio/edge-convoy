@@ -65,11 +65,8 @@
 //!         synchronous: convoy::SynchronousMode::Full,
 //!     };
 //!
-//!     // Create cache manager
-//!     let cache = convoy::CacheManager::new(cache_config)?;
-//!
 //!     // Create and run bridge
-//!     let bridge = Bridge::new(bridge_config, cache).await?;
+//!     let bridge = Bridge::new(bridge_config, cache_config).await?;
 //!     bridge.run().await?;
 //!
 //!     Ok(())
@@ -77,20 +74,18 @@
 //! ```
 
 pub mod bridge;
-pub mod cache;
 pub mod config;
 pub mod error;
-pub mod replay;
 pub mod tasks;
 pub mod topic;
 pub mod util;
 
 // Re-export main types for convenient access
 pub use bridge::Bridge;
-pub use cache::{CacheManager, CachedMessage};
 pub use config::{
     BridgeConfig, BrokerConfig, CacheConfig, Config, EvictionPolicy, ForwardRule, SubscribeRule,
     SynchronousMode, TlsConfig,
 };
 pub use error::{BridgeError, Result};
+pub use tasks::cache::CachedMessage;
 pub use topic::{apply_forward_mapping, apply_subscribe_mapping, topic_matches_filter};

@@ -1,6 +1,4 @@
-use convoy::{
-    Bridge, BridgeConfig, BrokerConfig, CacheConfig, CacheManager, ForwardRule, TlsConfig,
-};
+use convoy::{Bridge, BridgeConfig, BrokerConfig, CacheConfig, ForwardRule, TlsConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -52,13 +50,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ..Default::default()
     };
 
-    // Create cache manager
-    let cache = CacheManager::new(cache_config)?;
-
     println!("Creating bridge...");
 
     // Create and run bridge
-    let bridge = Bridge::new(bridge_config, cache).await?;
+    let bridge = Bridge::new(bridge_config, cache_config).await?;
 
     println!("Bridge created, starting event loop...");
     println!("Press Ctrl+C to stop");

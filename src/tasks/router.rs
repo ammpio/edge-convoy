@@ -142,7 +142,8 @@ async fn handle_local_event(
                     } else {
                         // Remote not connected, cache the message
                         debug!("Remote disconnected, caching message");
-                        cache_message(cache_cmd_tx, &remote_topic, &payload, qos_num, retain).await?;
+                        cache_message(cache_cmd_tx, &remote_topic, &payload, qos_num, retain)
+                            .await?;
                     }
 
                     break;

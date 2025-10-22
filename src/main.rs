@@ -1,5 +1,5 @@
 use clap::Parser;
-use convoy::{Bridge, CacheManager, Config};
+use convoy::{Bridge, Config};
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
@@ -41,30 +41,8 @@ async fn main() {
         }
     };
 
-    // Initialize cache
-    let cache = match CacheManager::new(config.cache.clone()) {
-        Ok(c) => c,
-        Err(e) => {
-            error!("Failed to initialize cache: {}", e);
-            std::process::exit(1);
-        }
-    };
-
-    // Show cache status
-    match cache.count().await {
-        Ok(count) if count > 0 => {
-            info!("Cache contains {} messages from previous session", count);
-        }
-        Ok(_) => {
-            info!("Cache is empty");
-        }
-        Err(e) => {
-            error!("Failed to query cache: {}", e);
-        }
-    }
-
     // Create and run bridge
-    match Bridge::new(config.bridge, cache).await {
+    match Bridge::new(config.bridge, config.cache).await {
         Ok(bridge) => {
             info!("Bridge initialized, starting event loop...");
             if let Err(e) = bridge.run().await {

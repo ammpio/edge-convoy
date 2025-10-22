@@ -3,7 +3,7 @@ use crate::util::payload_hash;
 use chrono;
 use rumqttc::QoS;
 use tokio::sync::{mpsc, oneshot};
-use tokio::time::{sleep, Duration};
+use tokio::time::{Duration, sleep};
 use tracing::{debug, error, info};
 
 /// Replay task that coordinates cache replay when remote is connected.
@@ -80,9 +80,7 @@ async fn replay_cache(
     // Get count first
     let (count_tx, count_rx) = oneshot::channel();
     if cache_cmd_tx
-        .send(CacheCommand::Count {
-            response: count_tx,
-        })
+        .send(CacheCommand::Count { response: count_tx })
         .await
         .is_err()
     {
@@ -217,7 +215,10 @@ async fn replay_cache(
 
             match delete_rx.await {
                 Ok(Ok(_)) => {
-                    debug!("Deleted batch of {} messages from cache", published_ids.len());
+                    debug!(
+                        "Deleted batch of {} messages from cache",
+                        published_ids.len()
+                    );
                 }
                 Ok(Err(e)) => {
                     error!(
@@ -239,9 +240,7 @@ async fn replay_cache(
     // Check final count
     let (count_tx, count_rx) = oneshot::channel();
     if cache_cmd_tx
-        .send(CacheCommand::Count {
-            response: count_tx,
-        })
+        .send(CacheCommand::Count { response: count_tx })
         .await
         .is_ok()
     {
