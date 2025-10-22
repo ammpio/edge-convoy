@@ -77,8 +77,11 @@ pub async fn replay_worker(
 
             debug!("Replaying batch of {} messages", messages.len());
 
+            // Track successfully published message IDs for batch deletion
+            let mut published_ids = Vec::with_capacity(messages.len());
+
             // Publish each message
-            for msg in messages {
+            for msg in &messages {
                 let topic = String::from_utf8_lossy(&msg.topic).to_string();
                 let qos = qos_from_u8(msg.qos);
 
@@ -98,11 +101,7 @@ pub async fn replay_worker(
                             delay_seconds,
                             payload_hash(&msg.payload)
                         );
-
-                        // Delete from cache after successful publish
-                        if let Err(e) = cache.delete_message(msg.id).await {
-                            error!("Failed to delete message {}: {}", msg.id, e);
-                        }
+                        published_ids.push(msg.id);
                     }
                     Err(e) => {
                         error!(
@@ -112,6 +111,15 @@ pub async fn replay_worker(
                         // Stop replaying on error, will retry later
                         break;
                     }
+                }
+            }
+
+            // Batch delete all successfully published messages
+            if !published_ids.is_empty() {
+                if let Err(e) = cache.delete_batch(&published_ids).await {
+                    error!("Failed to delete batch of {} messages: {}", published_ids.len(), e);
+                } else {
+                    debug!("Deleted batch of {} messages from cache", published_ids.len());
                 }
             }
 

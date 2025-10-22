@@ -3,34 +3,26 @@
 use crate::cache::CacheManager;
 use crate::config::{BridgeConfig, BrokerConfig};
 use crate::error::Result;
-use crate::replay::replay_worker;
-use crate::topic::{apply_forward_mapping, apply_subscribe_mapping, topic_matches_filter};
-use crate::util::payload_hash;
-use backoff::{ExponentialBackoff, backoff::Backoff};
 use rumqttc::{
-    AsyncClient, Event, EventLoop, Incoming, LastWill, MqttOptions, Publish, QoS, Transport,
+    AsyncClient, EventLoop, LastWill, MqttOptions, QoS, Transport,
 };
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::sync::Notify;
-use tokio::time::Instant;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 pub struct Bridge {
     config: BridgeConfig,
     cache: Arc<CacheManager>,
+    cache_config: crate::config::CacheConfig,
     local_client: AsyncClient,
-    local_eventloop: EventLoop,
     remote_client: AsyncClient,
+    local_eventloop: EventLoop,
     remote_eventloop: EventLoop,
-    remote_connected: Arc<tokio::sync::RwLock<bool>>,
-    replay_trigger: Arc<Notify>,
-    remote_backoff: ExponentialBackoff,
-    remote_backoff_until: Option<Instant>,
 }
 
 impl Bridge {
     pub async fn new(config: BridgeConfig, cache: CacheManager) -> Result<Self> {
+        let cache_config = cache.config.clone();
         let cache = Arc::new(cache);
 
         // Create local MQTT client
@@ -45,23 +37,14 @@ impl Bridge {
         );
         let (remote_client, remote_eventloop) = create_mqtt_client(&config.remote, Some(lwt))?;
 
-        let remote_connected = Arc::new(tokio::sync::RwLock::new(false));
-        let replay_trigger = Arc::new(Notify::new());
-
-        // Configure exponential backoff for remote connection retries
-        let remote_backoff = create_connection_backoff();
-
         Ok(Self {
             config,
             cache,
+            cache_config,
             local_client,
             local_eventloop,
             remote_client,
             remote_eventloop,
-            remote_connected,
-            replay_trigger,
-            remote_backoff,
-            remote_backoff_until: None,
         })
     }
 
@@ -75,281 +58,83 @@ impl Bridge {
         Arc::clone(&self.cache)
     }
 
-    pub async fn run(mut self) -> Result<()> {
-        // Spawn replay worker
-        let replay_handle = tokio::spawn({
-            let cache = Arc::clone(&self.cache);
-            let remote_client = self.remote_client.clone();
-            let remote_connected = Arc::clone(&self.remote_connected);
-            let replay_trigger = Arc::clone(&self.replay_trigger);
-            let flush_batch = self.cache.config.flush_batch;
-            let flush_interval_ms = self.cache.config.flush_interval_ms;
+    pub async fn run(self) -> Result<()> {
+        use crate::tasks::*;
 
-            async move {
-                replay_worker(
-                    cache,
-                    remote_client,
-                    remote_connected,
-                    replay_trigger,
-                    flush_batch,
-                    flush_interval_ms,
-                )
-                .await
-            }
-        });
+        // Extract fields we need
+        let Bridge {
+            config,
+            cache: _,  // CacheManager not used in new architecture
+            cache_config,
+            local_client,
+            remote_client,
+            local_eventloop,
+            remote_eventloop,
+        } = self;
 
-        // Run event loops
-        loop {
-            tokio::select! {
-                local_event = self.local_eventloop.poll() => {
-                    if let Err(e) = self.handle_local_event(local_event).await {
-                        error!("Local event error: {}", e);
-                    }
-                }
-                remote_event = self.remote_eventloop.poll(), if self.should_poll_remote() => {
-                    if let Err(e) = self.handle_remote_event(remote_event).await {
-                        error!("Remote event error: {}", e);
-                    }
-                }
-                _ = tokio::time::sleep_until(self.remote_backoff_until.unwrap_or(Instant::now() + Duration::from_secs(86400))), if self.remote_backoff_until.is_some() => {
-                    // Backoff period complete, allow reconnection
-                    debug!("Backoff period complete, allowing remote reconnection");
-                    self.remote_backoff_until = None;
-                }
-                _ = tokio::signal::ctrl_c() => {
-                    info!("Received shutdown signal");
-                    break;
-                }
-            }
-        }
+        // Create channels for local broker task
+        let (local_cmd_tx, local_cmd_rx) = tokio::sync::mpsc::channel(100);
+        let (local_event_tx, local_event_rx) = tokio::sync::mpsc::channel(100);
 
-        replay_handle.abort();
-        Ok(())
-    }
+        // Create channels for remote broker task
+        let (remote_cmd_tx, remote_cmd_rx) = tokio::sync::mpsc::channel(100);
+        let (remote_event_tx, remote_event_rx) = tokio::sync::mpsc::channel(100);
 
-    fn should_poll_remote(&self) -> bool {
-        // Only poll remote if we're not in backoff period
-        match self.remote_backoff_until {
-            None => true,
-            Some(until) => Instant::now() >= until,
-        }
-    }
+        // Create channels for cache task
+        let (cache_cmd_tx, cache_cmd_rx) = tokio::sync::mpsc::channel(100);
 
-    /// Subscribe to local topics (for forwarding to remote)
-    async fn subscribe_local_topics(&self) -> Result<()> {
-        for rule in &self.config.forward {
-            let qos = qos_from_u8(rule.qos);
-            self.local_client.subscribe(&rule.local_filter, qos).await?;
-            info!(
-                "Subscribed to local topic: {} (QoS {})",
-                rule.local_filter, rule.qos
-            );
-        }
-        Ok(())
-    }
+        // Create channels for replay task
+        let (replay_cmd_tx, replay_cmd_rx) = tokio::sync::mpsc::channel(100);
 
-    /// Subscribe to remote topics (for forwarding to local)
-    async fn subscribe_remote_topics(&self) -> Result<()> {
-        for rule in &self.config.subscribe {
-            let qos = qos_from_u8(rule.qos);
-            self.remote_client
-                .subscribe(&rule.remote_filter, qos)
-                .await?;
-            info!(
-                "Subscribed to remote topic: {} (QoS {})",
-                rule.remote_filter, rule.qos
-            );
-        }
+        // Spawn local broker task
+        tokio::spawn(local_broker::local_broker_task(
+            local_client,
+            local_eventloop,
+            local_cmd_rx,
+            local_event_tx,
+        ));
+
+        // Spawn remote broker task with DNS fix parameters
+        tokio::spawn(remote_broker::remote_broker_task(
+            config.remote.clone(),
+            config.state_topic.clone(),
+            config.state_offline_payload.clone(),
+            remote_client,
+            remote_eventloop,
+            remote_cmd_rx,
+            remote_event_tx,
+        ));
+
+        // Spawn cache task
+        tokio::spawn(cache::cache_task(
+            cache_config.clone(),
+            cache_cmd_rx,
+        ));
+
+        // Spawn replay task
+        tokio::spawn(replay::replay_task(
+            replay_cmd_rx,
+            cache_cmd_tx.clone(),
+            remote_cmd_tx.clone(),
+            cache_config.flush_batch,
+            cache_config.flush_interval_ms,
+        ));
+
+        // Run router task (blocks until shutdown)
+        router::router_task(
+            config,
+            local_event_rx,
+            remote_event_rx,
+            local_cmd_tx,
+            remote_cmd_tx,
+            cache_cmd_tx,
+            replay_cmd_tx,
+        )
+        .await;
 
         Ok(())
     }
 
-    async fn handle_local_event(
-        &mut self,
-        event: std::result::Result<Event, rumqttc::ConnectionError>,
-    ) -> Result<()> {
-        match event {
-            Ok(Event::Incoming(Incoming::Publish(publish))) => {
-                self.handle_local_publish(publish).await?;
-            }
-            Ok(Event::Incoming(Incoming::ConnAck(_))) => {
-                info!("Connected to local broker");
-                self.subscribe_local_topics().await?;
-            }
-            Ok(Event::Incoming(Incoming::Disconnect)) => {
-                warn!("Disconnected from local broker");
-            }
-            Ok(_) => {}
-            Err(e) => {
-                error!("Local connection error: {}", e);
-                tokio::time::sleep(Duration::from_secs(1)).await;
-            }
-        }
-        Ok(())
-    }
-
-    async fn handle_remote_event(
-        &mut self,
-        event: std::result::Result<Event, rumqttc::ConnectionError>,
-    ) -> Result<()> {
-        match event {
-            Ok(Event::Incoming(Incoming::ConnAck(_))) => {
-                info!("Connected to remote broker");
-                *self.remote_connected.write().await = true;
-
-                // Reset backoff on successful connection
-                self.remote_backoff.reset();
-                self.remote_backoff_until = None;
-
-                // Publish online state
-                let qos = QoS::AtLeastOnce;
-                self.remote_client
-                    .publish(
-                        &self.config.state_topic,
-                        qos,
-                        true, // retain
-                        self.config.state_online_payload.as_bytes(),
-                    )
-                    .await?;
-                info!("Published online state to {}", self.config.state_topic);
-
-                self.subscribe_remote_topics().await?;
-
-                // Trigger replay worker
-                self.replay_trigger.notify_one();
-            }
-            Ok(Event::Incoming(Incoming::Publish(publish))) => {
-                self.handle_remote_publish(publish).await?;
-            }
-            Ok(Event::Incoming(Incoming::Disconnect)) => {
-                warn!("Disconnected from remote broker");
-                *self.remote_connected.write().await = false;
-            }
-            Ok(_) => {}
-            Err(e) => {
-                error!("Remote connection error: {}", e);
-                *self.remote_connected.write().await = false;
-
-                // Schedule retry with exponential backoff
-                if let Some(delay) = self.remote_backoff.next_backoff() {
-                    self.remote_backoff_until = Some(Instant::now() + delay);
-                    warn!("Waiting {:?} before reconnecting to remote broker", delay);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    async fn handle_local_publish(&self, publish: Publish) -> Result<()> {
-        let topic = publish.topic.clone();
-        debug!(
-            "Received from local: {} (hash={})",
-            topic,
-            payload_hash(&publish.payload)
-        );
-
-        // Find matching forward rule
-        for rule in &self.config.forward {
-            if topic_matches_filter(&topic, &rule.local_filter) {
-                let remote_topic = apply_forward_mapping(&topic, rule);
-                let qos_num = rule.qos;
-                let qos = qos_from_u8(qos_num);
-
-                // Try to publish to remote
-                let is_connected = *self.remote_connected.read().await;
-
-                if is_connected {
-                    match self
-                        .remote_client
-                        .publish(&remote_topic, qos, publish.retain, publish.payload.clone())
-                        .await
-                    {
-                        Ok(_) => {
-                            debug!(
-                                "Forwarded to remote: {} -> {} (hash={})",
-                                topic,
-                                remote_topic,
-                                payload_hash(&publish.payload)
-                            );
-                        }
-                        Err(e) => {
-                            warn!("Failed to publish to remote: {}, caching", e);
-                            self.cache_message(&remote_topic, &publish, qos_num).await?;
-                        }
-                    }
-                } else {
-                    // Remote not connected, cache the message
-                    debug!("Remote disconnected, caching message");
-                    self.cache_message(&remote_topic, &publish, qos_num).await?;
-                }
-
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn handle_remote_publish(&self, publish: Publish) -> Result<()> {
-        let topic = publish.topic.clone();
-        debug!(
-            "Received from remote: {} (hash={})",
-            topic,
-            payload_hash(&publish.payload)
-        );
-
-        // Find matching subscribe rule
-        for rule in &self.config.subscribe {
-            if topic_matches_filter(&topic, &rule.remote_filter) {
-                match apply_subscribe_mapping(&topic, rule) {
-                    Ok(local_topic) => {
-                        let qos = qos_from_u8(rule.qos);
-
-                        // Publish to local (best effort, no caching)
-                        if let Err(e) = self
-                            .local_client
-                            .publish(&local_topic, qos, publish.retain, publish.payload.clone())
-                            .await
-                        {
-                            warn!("Failed to publish to local: {}", e);
-                        } else {
-                            debug!(
-                                "Forwarded to local: {} -> {} (hash={})",
-                                topic,
-                                local_topic,
-                                payload_hash(&publish.payload)
-                            );
-                        }
-                    }
-                    Err(e) => {
-                        warn!("Topic mapping error: {}", e);
-                    }
-                }
-
-                break;
-            }
-        }
-
-        Ok(())
-    }
-
-    async fn cache_message(&self, topic: &str, publish: &Publish, qos: u8) -> Result<()> {
-        self.cache
-            .enqueue(topic.as_bytes(), &publish.payload, qos, publish.retain)
-            .await?;
-        Ok(())
-    }
-}
-
-fn create_connection_backoff() -> ExponentialBackoff {
-    ExponentialBackoff {
-        initial_interval: Duration::from_secs(1),
-        max_interval: Duration::from_secs(30),
-        max_elapsed_time: None, // Retry forever
-        multiplier: 2.0,
-        randomization_factor: 0.2, // 20% jitter (down from default 50%)
-        ..Default::default()
-    }
 }
 
 fn create_mqtt_client(
@@ -441,14 +226,5 @@ fn parse_broker_addr(addr: &str) -> (String, u16) {
         (host, port)
     } else {
         (addr.to_string(), 1883)
-    }
-}
-
-fn qos_from_u8(qos: u8) -> QoS {
-    match qos {
-        0 => QoS::AtMostOnce,
-        1 => QoS::AtLeastOnce,
-        2 => QoS::ExactlyOnce,
-        _ => QoS::AtLeastOnce,
     }
 }

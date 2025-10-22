@@ -36,8 +36,8 @@ pub struct CachedMessage {
 ///
 /// # Thread Safety
 ///
-/// `CacheManager` is safe to share across threads via `Arc`. All operations
-/// use internal locking to ensure consistency.
+/// `CacheManager` is safe to share across threads. Uses Arc<Mutex<Connection>>
+/// with spawn_blocking to avoid blocking the async runtime.
 pub struct CacheManager {
     conn: Arc<Mutex<Connection>>,
     /// Cache configuration
@@ -58,9 +58,12 @@ impl CacheManager {
     /// ```no_run
     /// use convoy::{CacheManager, CacheConfig};
     ///
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), convoy::BridgeError> {
     /// let config = CacheConfig::default();
     /// let cache = CacheManager::new(config)?;
-    /// # Ok::<(), convoy::BridgeError>(())
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn new(config: CacheConfig) -> Result<Self> {
         let conn = Self::open_database(&config)?;
@@ -78,7 +81,7 @@ impl CacheManager {
 
         let conn = Connection::open(&config.sqlite_path)?;
 
-        // Set WAL mode (PRAGMA can return results, so use pragma_update)
+        // Set WAL mode
         conn.pragma_update(None, "journal_mode", "WAL")?;
 
         // Set synchronous mode
@@ -145,55 +148,65 @@ impl CacheManager {
             return Ok(());
         }
 
-        let conn = self.conn.lock().await;
+        let conn = Arc::clone(&self.conn);
+        let config = self.config.clone();
+        let topic = topic.to_vec();
+        let payload = payload.to_vec();
 
-        let row_count: usize =
-            conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
 
-        // Check if we need to evict
-        if self.config.max_rows > 0 && row_count >= self.config.max_rows {
-            match self.config.eviction {
-                EvictionPolicy::DropOldest => {
-                    let to_delete = row_count - self.config.max_rows + 1;
-                    conn.execute(
-                        "DELETE FROM msg_queue WHERE id IN (
+            let row_count: usize = conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
+
+            // Check if we need to evict
+            if config.max_rows > 0 && row_count >= config.max_rows {
+                match config.eviction {
+                    EvictionPolicy::DropOldest => {
+                        let to_delete = row_count - config.max_rows + 1;
+                        conn.execute(
+                            "DELETE FROM msg_queue WHERE id IN (
                                 SELECT id FROM msg_queue ORDER BY id LIMIT ?1
                             )",
-                        [to_delete],
-                    )?;
-                    debug!("Evicted {} oldest messages", to_delete);
-                }
-                EvictionPolicy::RejectNew => {
-                    warn!(
-                        "Cache full, rejecting new message (max_rows={})",
-                        self.config.max_rows
-                    );
-                    return Err(BridgeError::CacheFull(format!(
-                        "Cache at max_rows limit: {}",
-                        self.config.max_rows
-                    )));
+                            [to_delete],
+                        )?;
+                        debug!("Evicted {} oldest messages", to_delete);
+                    }
+                    EvictionPolicy::RejectNew => {
+                        warn!(
+                            "Cache full, rejecting new message (max_rows={})",
+                            config.max_rows
+                        );
+                        return Err(BridgeError::CacheFull(format!(
+                            "Cache at max_rows limit: {}",
+                            config.max_rows
+                        )));
+                    }
                 }
             }
-        }
 
-        // Insert the message
-        let ts_enqueued = chrono::Utc::now().timestamp();
-        conn.execute(
-            "INSERT INTO msg_queue (topic, payload, qos, retain, ts_enqueued)
-             VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![topic, payload, qos, retain, ts_enqueued],
-        )?;
+            // Insert the message
+            let ts_enqueued = chrono::Utc::now().timestamp();
+            conn.execute(
+                "INSERT INTO msg_queue (topic, payload, qos, retain, ts_enqueued)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![topic, payload, qos, retain, ts_enqueued],
+            )?;
 
-        info!(
-            "Enqueued message: topic={:?}, qos={}, size={}, hash={}",
-            String::from_utf8_lossy(topic),
-            qos,
-            payload.len(),
-            payload_hash(payload)
-        );
-        debug!("Queue size: {}", row_count + 1);
+            info!(
+                "Enqueued message: topic={:?}, qos={}, size={}, hash={}",
+                String::from_utf8_lossy(&topic),
+                qos,
+                payload.len(),
+                payload_hash(&payload)
+            );
+            debug!("Queue size: {}", row_count + 1);
 
-        Ok(())
+            Ok(())
+        })
+        .await
+        .map_err(|e| BridgeError::Io(std::io::Error::other(
+            format!("spawn_blocking panicked: {}", e),
+        )))?
     }
 
     /// Dequeue a batch of messages from the cache in FIFO order.
@@ -209,29 +222,37 @@ impl CacheManager {
     ///
     /// Returns an error if database operations fail.
     pub async fn dequeue_batch(&self, limit: usize) -> Result<Vec<CachedMessage>> {
-        let conn = self.conn.lock().await;
+        let conn = Arc::clone(&self.conn);
 
-        let mut stmt = conn.prepare(
-            "SELECT id, topic, payload, qos, retain, ts_enqueued
-             FROM msg_queue
-             ORDER BY id
-             LIMIT ?1",
-        )?;
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
 
-        let messages = stmt
-            .query_map(params![limit], |row| {
-                Ok(CachedMessage {
-                    id: row.get(0)?,
-                    topic: row.get(1)?,
-                    payload: row.get(2)?,
-                    qos: row.get(3)?,
-                    retain: row.get::<_, i32>(4)? != 0,
-                    ts_enqueued: row.get(5)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+            let mut stmt = conn.prepare(
+                "SELECT id, topic, payload, qos, retain, ts_enqueued
+                 FROM msg_queue
+                 ORDER BY id
+                 LIMIT ?1",
+            )?;
 
-        Ok(messages)
+            let messages = stmt
+                .query_map([limit], |row| {
+                    Ok(CachedMessage {
+                        id: row.get(0)?,
+                        topic: row.get(1)?,
+                        payload: row.get(2)?,
+                        qos: row.get(3)?,
+                        retain: row.get::<_, i32>(4)? != 0,
+                        ts_enqueued: row.get(5)?,
+                    })
+                })?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+
+            Ok(messages)
+        })
+        .await
+        .map_err(|e| BridgeError::Io(std::io::Error::other(
+            format!("spawn_blocking panicked: {}", e),
+        )))?
     }
 
     /// Delete a message from the cache by ID.
@@ -242,9 +263,56 @@ impl CacheManager {
     ///
     /// Returns an error if database operations fail.
     pub async fn delete_message(&self, id: i64) -> Result<()> {
-        let conn = self.conn.lock().await;
-        conn.execute("DELETE FROM msg_queue WHERE id = ?1", [id])?;
-        Ok(())
+        let conn = Arc::clone(&self.conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+            conn.execute("DELETE FROM msg_queue WHERE id = ?1", [id])?;
+            Ok(())
+        })
+        .await
+        .map_err(|e| BridgeError::Io(std::io::Error::other(
+            format!("spawn_blocking panicked: {}", e),
+        )))?
+    }
+
+    /// Delete multiple messages from the cache by their IDs.
+    ///
+    /// This is more efficient than calling `delete_message` multiple times.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if database operations fail.
+    pub async fn delete_batch(&self, ids: &[i64]) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        let conn = Arc::clone(&self.conn);
+        let ids = ids.to_vec();
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+
+            // Build query with placeholders
+            let placeholders = ids.iter()
+                .map(|_| "?")
+                .collect::<Vec<_>>()
+                .join(",");
+            let query_str = format!("DELETE FROM msg_queue WHERE id IN ({})", placeholders);
+
+            let mut stmt = conn.prepare(&query_str)?;
+            let params: Vec<&dyn rusqlite::ToSql> = ids.iter()
+                .map(|id| id as &dyn rusqlite::ToSql)
+                .collect();
+            stmt.execute(params.as_slice())?;
+
+            Ok(())
+        })
+        .await
+        .map_err(|e| BridgeError::Io(std::io::Error::other(
+            format!("spawn_blocking panicked: {}", e),
+        )))?
     }
 
     /// Get the number of messages currently in the cache.
@@ -253,10 +321,17 @@ impl CacheManager {
     ///
     /// Returns an error if database operations fail.
     pub async fn count(&self) -> Result<usize> {
-        let conn = self.conn.lock().await;
-        let count: usize =
-            conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
-        Ok(count)
+        let conn = Arc::clone(&self.conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+            let count: usize = conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
+            Ok(count)
+        })
+        .await
+        .map_err(|e| BridgeError::Io(std::io::Error::other(
+            format!("spawn_blocking panicked: {}", e),
+        )))?
     }
 
     /// Check if the cache is empty.
@@ -276,9 +351,17 @@ impl CacheManager {
     ///
     /// Returns an error if database operations fail.
     pub async fn clear(&self) -> Result<()> {
-        let conn = self.conn.lock().await;
-        conn.execute("DELETE FROM msg_queue", [])?;
-        info!("Cache cleared");
-        Ok(())
+        let conn = Arc::clone(&self.conn);
+
+        tokio::task::spawn_blocking(move || {
+            let conn = conn.blocking_lock();
+            conn.execute("DELETE FROM msg_queue", [])?;
+            info!("Cache cleared");
+            Ok(())
+        })
+        .await
+        .map_err(|e| BridgeError::Io(std::io::Error::other(
+            format!("spawn_blocking panicked: {}", e),
+        )))?
     }
 }

@@ -4,3 +4,5 @@
 test-harness/certs/*
 test-harness/passwd
 test-harness/cache.db*
+
+config.toml

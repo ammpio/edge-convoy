@@ -81,6 +81,7 @@ pub mod cache;
 pub mod config;
 pub mod error;
 pub mod replay;
+pub mod tasks;
 pub mod topic;
 pub mod util;
 

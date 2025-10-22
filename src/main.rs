@@ -26,7 +26,6 @@ async fn main() {
 
     tracing_subscriber::fmt()
         .with_env_filter(env_filter)
-        .without_time()
         .compact()
         .init();
 
