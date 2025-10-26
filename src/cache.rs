@@ -2,12 +2,9 @@
 
 use crate::config::{CacheConfig, EvictionPolicy, SynchronousMode};
 use crate::error::Result;
-use crate::tasks::messages::CacheCommand;
-use crate::util::payload_hash;
+use crate::mqtt_utils::payload_hash;
 use rusqlite::{Connection, params};
 use std::path::Path;
-use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
 use tracing::{debug, info, warn};
 
 /// A cached MQTT message awaiting delivery to the remote broker.
@@ -28,85 +25,6 @@ pub struct CachedMessage {
     pub retain: bool,
     /// Unix timestamp when message was enqueued
     pub ts_enqueued: i64,
-}
-
-/// Cache task that owns the SQLite connection and handles all database operations.
-///
-/// All blocking rusqlite operations are wrapped in `spawn_blocking` to avoid blocking
-/// the async runtime. The connection is wrapped in Arc<Mutex<>> to allow moving into
-/// spawn_blocking closures.
-pub async fn cache_task(config: CacheConfig, mut command_rx: mpsc::Receiver<CacheCommand>) {
-    // Open database connection
-    let conn = match open_database(&config) {
-        Ok(conn) => Arc::new(Mutex::new(conn)),
-        Err(e) => {
-            tracing::error!("Failed to open cache database: {}", e);
-            return;
-        }
-    };
-
-    info!("Cache task started");
-
-    // Process commands
-    while let Some(cmd) = command_rx.recv().await {
-        match cmd {
-            CacheCommand::Enqueue {
-                topic,
-                payload,
-                qos,
-                retain,
-                response,
-            } => {
-                let conn = Arc::clone(&conn);
-                let config = config.clone();
-                let result = tokio::task::spawn_blocking(move || {
-                    enqueue(&conn, &config, &topic, &payload, qos, retain)
-                })
-                .await
-                .unwrap_or_else(|e| {
-                    Err(crate::error::BridgeError::Io(std::io::Error::other(
-                        format!("spawn_blocking panicked: {}", e),
-                    )))
-                });
-                let _ = response.send(result);
-            }
-            CacheCommand::DequeueBatch { limit, response } => {
-                let conn = Arc::clone(&conn);
-                let result = tokio::task::spawn_blocking(move || dequeue_batch(&conn, limit))
-                    .await
-                    .unwrap_or_else(|e| {
-                        Err(crate::error::BridgeError::Io(std::io::Error::other(
-                            format!("spawn_blocking panicked: {}", e),
-                        )))
-                    });
-                let _ = response.send(result);
-            }
-            CacheCommand::DeleteBatch { ids, response } => {
-                let conn = Arc::clone(&conn);
-                let result = tokio::task::spawn_blocking(move || delete_batch(&conn, &ids))
-                    .await
-                    .unwrap_or_else(|e| {
-                        Err(crate::error::BridgeError::Io(std::io::Error::other(
-                            format!("spawn_blocking panicked: {}", e),
-                        )))
-                    });
-                let _ = response.send(result);
-            }
-            CacheCommand::Count { response } => {
-                let conn = Arc::clone(&conn);
-                let result = tokio::task::spawn_blocking(move || count(&conn))
-                    .await
-                    .unwrap_or_else(|e| {
-                        Err(crate::error::BridgeError::Io(std::io::Error::other(
-                            format!("spawn_blocking panicked: {}", e),
-                        )))
-                    });
-                let _ = response.send(result);
-            }
-        }
-    }
-
-    info!("Cache task shutting down");
 }
 
 fn open_database(config: &CacheConfig) -> Result<Connection> {
@@ -133,7 +51,7 @@ fn open_database(config: &CacheConfig) -> Result<Connection> {
 
     // Create schema
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS msg_queue (
+        "CREATE TABLE IF NOT EXISTS messages (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
             topic       BLOB NOT NULL,
             payload     BLOB NOT NULL,
@@ -149,7 +67,7 @@ fn open_database(config: &CacheConfig) -> Result<Connection> {
 }
 
 fn enqueue(
-    conn: &Arc<Mutex<Connection>>,
+    conn: &Connection,
     config: &CacheConfig,
     topic: &[u8],
     payload: &[u8],
@@ -162,11 +80,7 @@ fn enqueue(
         return Ok(());
     }
 
-    // Lock is synchronous - we're already in spawn_blocking
-    let conn = conn.blocking_lock();
-
-    let row_count: usize =
-        conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
+    let row_count: usize = count(conn)?;
 
     // Check if we need to evict
     if config.max_rows > 0 && row_count >= config.max_rows {
@@ -174,8 +88,8 @@ fn enqueue(
             EvictionPolicy::DropOldest => {
                 let to_delete = row_count - config.max_rows + 1;
                 conn.execute(
-                    "DELETE FROM msg_queue WHERE id IN (
-                        SELECT id FROM msg_queue ORDER BY id LIMIT ?1
+                    "DELETE FROM messages WHERE id IN (
+                        SELECT id FROM messages ORDER BY id LIMIT ?1
                     )",
                     [to_delete],
                 )?;
@@ -197,7 +111,7 @@ fn enqueue(
     // Insert the message
     let ts_enqueued = chrono::Utc::now().timestamp();
     conn.execute(
-        "INSERT INTO msg_queue (topic, payload, qos, retain, ts_enqueued)
+        "INSERT INTO messages (topic, payload, qos, retain, ts_enqueued)
          VALUES (?1, ?2, ?3, ?4, ?5)",
         params![topic, payload, qos, retain, ts_enqueued],
     )?;
@@ -214,12 +128,10 @@ fn enqueue(
     Ok(())
 }
 
-fn dequeue_batch(conn: &Arc<Mutex<Connection>>, limit: usize) -> Result<Vec<CachedMessage>> {
-    let conn = conn.blocking_lock();
-
+fn dequeue_batch(conn: &Connection, limit: usize) -> Result<Vec<CachedMessage>> {
     let mut stmt = conn.prepare(
         "SELECT id, topic, payload, qos, retain, ts_enqueued
-         FROM msg_queue
+         FROM messages
          ORDER BY id
          LIMIT ?1",
     )?;
@@ -240,16 +152,14 @@ fn dequeue_batch(conn: &Arc<Mutex<Connection>>, limit: usize) -> Result<Vec<Cach
     Ok(messages)
 }
 
-fn delete_batch(conn: &Arc<Mutex<Connection>>, ids: &[i64]) -> Result<()> {
+fn delete_batch(conn: &Connection, ids: &[i64]) -> Result<()> {
     if ids.is_empty() {
         return Ok(());
     }
 
-    let conn = conn.blocking_lock();
-
     // Build query with placeholders
     let placeholders = ids.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-    let query_str = format!("DELETE FROM msg_queue WHERE id IN ({})", placeholders);
+    let query_str = format!("DELETE FROM messages WHERE id IN ({})", placeholders);
 
     let mut stmt = conn.prepare(&query_str)?;
     let params: Vec<&dyn rusqlite::ToSql> =
@@ -259,8 +169,7 @@ fn delete_batch(conn: &Arc<Mutex<Connection>>, ids: &[i64]) -> Result<()> {
     Ok(())
 }
 
-fn count(conn: &Arc<Mutex<Connection>>) -> Result<usize> {
-    let conn = conn.blocking_lock();
-    let count: usize = conn.query_row("SELECT COUNT(*) FROM msg_queue", [], |row| row.get(0))?;
+fn count(conn: &Connection) -> Result<usize> {
+    let count: usize = conn.query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))?;
     Ok(count)
 }

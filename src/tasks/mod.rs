@@ -1,8 +1,3 @@
-pub mod cache;
-pub mod local_broker;
-pub mod messages;
-pub mod remote_broker;
-pub mod replay;
-pub mod router;
+mod mqtt_actor;
 
-pub use messages::*;
+pub use mqtt_actor::MqttActor;

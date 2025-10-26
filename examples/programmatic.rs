@@ -1,7 +1,8 @@
-use convoy::{Bridge, BridgeConfig, BrokerConfig, CacheConfig, ForwardRule, TlsConfig};
+use convoy::{
+    Bridge, BridgeConfig, BrokerConfig, CacheConfig, ForwardDirection, ForwardRule, TlsConfig,
+};
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Note: For logging, initialize tracing_subscriber or use your own logging setup
     // Example with tracing_subscriber (add it as a dev-dependency):
     // tracing_subscriber::fmt::init();
@@ -37,11 +38,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         state_online_payload: "1".to_string(),
         state_offline_payload: "0".to_string(),
         forward: vec![ForwardRule {
-            local_filter: "sensors/#".to_string(),
+            topic_pattern: "sensors/#".to_string(),
+            direction: ForwardDirection::Out,
+            local_prefix: "".to_string(),
             remote_prefix: "devices/edge1/".to_string(),
             qos: 1,
         }],
-        subscribe: vec![],
     };
 
     // Configure cache with defaults
@@ -53,12 +55,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Creating bridge...");
 
     // Create and run bridge
-    let bridge = Bridge::new(bridge_config, cache_config).await?;
+    let bridge = Bridge::new(bridge_config, cache_config)?;
 
     println!("Bridge created, starting event loop...");
     println!("Press Ctrl+C to stop");
 
-    bridge.run().await?;
+    bridge.run()?;
 
     Ok(())
 }

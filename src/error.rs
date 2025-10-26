@@ -1,10 +1,12 @@
 use thiserror::Error;
 
+use crate::messages::MqttEvent;
+
 #[derive(Error, Debug)]
 #[allow(clippy::result_large_err)]
 pub enum BridgeError {
     #[error("MQTT error: {0}")]
-    Mqtt(#[from] rumqttc::ClientError),
+    MqttClient(#[from] rumqttc::ClientError),
 
     #[error("MQTT connection error: {0}")]
     MqttConnection(#[from] rumqttc::ConnectionError),
@@ -15,8 +17,11 @@ pub enum BridgeError {
     #[error("TLS error: {0}")]
     Tls(#[from] native_tls::Error),
 
-    #[error("IO error: {0}")]
+    #[error("I/O error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("Channel send error: {0}")]
+    Channel(#[from] flume::SendError<MqttEvent>),
 
     #[cfg(feature = "cli")]
     #[error("TOML deserialization error: {0}")]

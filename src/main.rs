@@ -12,12 +12,11 @@ struct Args {
     config: String,
 
     /// Log level (trace, debug, info, warn, error)
-    #[arg(short, long, default_value = "info")]
+    #[arg(short, long, default_value = "debug")]
     log_level: String,
 }
 
-#[tokio::main]
-async fn main() {
+fn main() {
     let args = Args::parse();
 
     // Initialize logging
@@ -42,10 +41,10 @@ async fn main() {
     };
 
     // Create and run bridge
-    match Bridge::new(config.bridge, config.cache).await {
+    match Bridge::new(config.bridge, config.cache) {
         Ok(bridge) => {
             info!("Bridge initialized, starting event loop...");
-            if let Err(e) = bridge.run().await {
+            if let Err(e) = bridge.run() {
                 error!("Bridge error: {}", e);
                 std::process::exit(1);
             }

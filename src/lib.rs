@@ -74,18 +74,18 @@
 //! ```
 
 pub mod bridge;
+pub mod cache;
 pub mod config;
 pub mod error;
+pub mod messages;
 pub mod tasks;
-pub mod topic;
-pub mod util;
+pub mod mqtt_utils;
 
 // Re-export main types for convenient access
 pub use bridge::Bridge;
 pub use config::{
-    BridgeConfig, BrokerConfig, CacheConfig, Config, EvictionPolicy, ForwardRule, SubscribeRule,
+    BridgeConfig, BrokerConfig, CacheConfig, Config, EvictionPolicy, ForwardDirection, ForwardRule,
     SynchronousMode, TlsConfig,
 };
 pub use error::{BridgeError, Result};
-pub use tasks::cache::CachedMessage;
-pub use topic::{apply_forward_mapping, apply_subscribe_mapping, topic_matches_filter};
+// pub use cache::CachedMessage;

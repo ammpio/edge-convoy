@@ -1,65 +1,26 @@
+use crate::cache::CachedMessage;
 use crate::error::Result;
-use crate::tasks::cache::CachedMessage;
+use flume::Sender;
 use rumqttc::QoS;
-use tokio::sync::oneshot;
 
 // ============================================================================
-// Local Broker Messages
+// MQTT Worker Messages
 // ============================================================================
 
 #[derive(Debug)]
-pub enum LocalCommand {
-    Subscribe {
-        topic: String,
-        qos: QoS,
-    },
+pub enum MqttCommand {
     Publish {
         topic: String,
         payload: Vec<u8>,
         qos: QoS,
         retain: bool,
+        /// Optional response channel for publish confirmation
+        response: Option<Sender<Result<()>>>,
     },
 }
 
 #[derive(Debug)]
-pub enum LocalEvent {
-    Connected,
-    Disconnected,
-    MessageReceived {
-        topic: String,
-        payload: Vec<u8>,
-        qos: u8,
-        retain: bool,
-    },
-    Error(String),
-}
-
-// ============================================================================
-// Remote Broker Messages
-// ============================================================================
-
-#[derive(Debug)]
-pub enum RemoteCommand {
-    Subscribe {
-        topic: String,
-        qos: QoS,
-    },
-    Publish {
-        topic: String,
-        payload: Vec<u8>,
-        qos: QoS,
-        retain: bool,
-        /// Optional response channel for replay acknowledgment
-        response: Option<oneshot::Sender<Result<()>>>,
-    },
-    /// Recreate the eventloop (for DNS resolution issues)
-    RecreateEventloop {
-        response: oneshot::Sender<Result<()>>,
-    },
-}
-
-#[derive(Debug)]
-pub enum RemoteEvent {
+pub enum MqttEvent {
     Connected,
     Disconnected,
     MessageReceived {
@@ -82,18 +43,18 @@ pub enum CacheCommand {
         payload: Vec<u8>,
         qos: u8,
         retain: bool,
-        response: oneshot::Sender<Result<()>>,
+        response: Sender<Result<()>>,
     },
     DequeueBatch {
         limit: usize,
-        response: oneshot::Sender<Result<Vec<CachedMessage>>>,
+        response: Sender<Result<Vec<CachedMessage>>>,
     },
     DeleteBatch {
         ids: Vec<i64>,
-        response: oneshot::Sender<Result<()>>,
+        response: Sender<Result<()>>,
     },
     Count {
-        response: oneshot::Sender<Result<usize>>,
+        response: Sender<Result<usize>>,
     },
 }
 

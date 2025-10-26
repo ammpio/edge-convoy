@@ -53,7 +53,7 @@ pub struct Config {
 
 /// Configuration for MQTT bridge connections and behavior.
 ///
-/// Defines settings for both local and remote broker connections, topic mapping rules,
+/// Defines settings for both local and remote broker connections, forwarding rules,
 /// and bridge state publishing with Last Will and Testament (LWT).
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct BridgeConfig {
@@ -69,10 +69,8 @@ pub struct BridgeConfig {
     /// Payload to publish via LWT when bridge goes offline
     pub state_offline_payload: String,
 
-    /// Rules for forwarding topics from local to remote broker
+    /// Rules for forwarding messages between brokers
     pub forward: Vec<ForwardRule>,
-    /// Rules for subscribing to remote topics and forwarding to local broker
-    pub subscribe: Vec<SubscribeRule>,
 }
 
 /// Configuration for a single MQTT broker connection.
@@ -121,33 +119,27 @@ pub struct TlsConfig {
     pub danger_accept_invalid_certs: bool,
 }
 
-/// Rule for forwarding messages from local to remote broker.
+/// Rule for forwarding messages between brokers.
 ///
-/// Topics matching `local_filter` will be forwarded to the remote broker
-/// with `remote_prefix` prepended to the topic name.
+/// Functions in a similar way to Mosquitto's `topic` directive
+/// (see [Mosquitto documentation](https://mosquitto.org/man/mosquitto-conf-5.html)),
+/// with two exceptions:
+/// - The `direction` can only be "out" or "in", not "both"
+/// - The default `qos` is 1, not 0
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 pub struct ForwardRule {
-    /// MQTT topic filter with wildcards (`+`, `#`) to match local topics
-    pub local_filter: String,
-    /// Prefix to prepend to matched topics when forwarding to remote
+    /// MQTT topic pattern; can include wildcards (`+`, `#`)
+    pub topic_pattern: String,
+    /// Direction of forwarding (out = local -> remote, in = remote -> local)
+    pub direction: ForwardDirection,
+    /// Local prefix. Removed from topic for "out", prepended for "in"
+    #[serde(default)]
+    pub local_prefix: String,
+    /// Remote prefix. Removed from topic for "in", prepended for "out"
     #[serde(default)]
     pub remote_prefix: String,
-    /// QoS level for forwarded messages (0, 1, or 2)
-    pub qos: u8,
-}
-
-/// Rule for subscribing to remote topics and forwarding to local broker.
-///
-/// Topics matching `remote_filter` will be forwarded to the local broker
-/// with `remote_prefix` stripped from the topic name.
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
-pub struct SubscribeRule {
-    /// MQTT topic filter with wildcards (`+`, `#`) to subscribe on remote
-    pub remote_filter: String,
-    /// Prefix to strip from remote topics before forwarding to local
-    #[serde(default)]
-    pub remote_prefix: String,
-    /// QoS level for subscription (0, 1, or 2)
+    /// QoS level for forwarded messages (0, 1, or 2); default is 1
+    #[serde(default = "default_forward_qos")]
     pub qos: u8,
 }
 
@@ -210,6 +202,20 @@ pub enum SynchronousMode {
     Off,
 }
 
+/// Direction of forwarding (out = local -> remote, in = remote -> local)
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, PartialEq, Eq, Hash)]
+#[serde(rename_all = "lowercase")]
+pub enum ForwardDirection {
+    /// Forwarding from local to remote
+    Out,
+    /// Forwarding from remote to local
+    In,
+}
+
+fn default_forward_qos() -> u8 {
+    1
+}
+
 fn default_keep_alive_secs() -> u16 {
     30
 }
@@ -227,7 +233,7 @@ fn default_eviction() -> EvictionPolicy {
 }
 
 fn default_flush_batch() -> usize {
-    1000
+    10
 }
 
 fn default_flush_interval_ms() -> u64 {
@@ -260,7 +266,7 @@ impl Config {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            sqlite_path: "cache.sqlite".into(),
+            sqlite_path: "cache.db".into(),
             cache_qos0: false,
             max_rows: default_max_rows(),
             eviction: default_eviction(),
