@@ -7,9 +7,9 @@ use tracing::{debug, debug_span};
 
 use crate::config::{BridgeConfig, CacheConfig, ForwardDirection};
 use crate::error::Result;
-use crate::tasks::MqttActor;
-use crate::mqtt_utils::state_lwt;
+use crate::mqtt_utils::state;
 use crate::mqtt_utils::topic::MqttSubscription;
+use crate::tasks::MqttActor;
 
 pub struct Bridge {
     config: BridgeConfig,
@@ -63,6 +63,7 @@ impl Bridge {
                 config.local.clone(),
                 local_subscriptions,
                 None,
+                None,
                 local_event_tx,
                 local_cmd_rx,
             )
@@ -76,7 +77,11 @@ impl Bridge {
             MqttActor::new(
                 config.remote.clone(),
                 remote_subscriptions,
-                Some(state_lwt(
+                Some(state::connected_msg(
+                    &config.state_topic,
+                    &config.state_online_payload,
+                )),
+                Some(state::disconnected_lwt(
                     &config.state_topic,
                     &config.state_offline_payload,
                 )),

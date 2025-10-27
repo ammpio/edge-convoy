@@ -13,22 +13,24 @@ pub struct MqttSubscription {
 }
 
 impl MqttSubscription {
-    pub fn from_forward_rule(forward_rule: &ForwardRule) -> Self {
-        Self {
-            topic: match forward_rule.direction {
-                ForwardDirection::Out => {
-                    add_prefix(&forward_rule.topic_pattern, &forward_rule.local_prefix).unwrap()
-                }
-                ForwardDirection::In => {
-                    add_prefix(&forward_rule.topic_pattern, &forward_rule.remote_prefix).unwrap()
-                }
-            },
-            qos: qos_from_u8(forward_rule.qos),
-        }
+    /// MQTT subcription from forward rule
+    ///
+    /// Generates an MQTTSubscription struct for the topic on which the rule listens
+    /// (local for ForwardDirection::Out; remote for ForwardDirection::In)
+    pub fn from_forward_rule(rule: &ForwardRule) -> Self {
+        let topic = match rule.direction {
+            ForwardDirection::Out => add_prefix(&rule.topic_pattern, &rule.local_prefix).unwrap(),
+            ForwardDirection::In => add_prefix(&rule.topic_pattern, &rule.remote_prefix).unwrap(),
+        };
+        let qos = qos_from_u8(rule.qos);
+        Self { topic, qos }
     }
 }
 
 /// Apply forward rules to a topic
+///
+/// Takes as input the topic on which a message is received
+/// Returns the topic on which the mssage should be published
 pub fn apply_forward_rule(topic: &str, rule: &ForwardRule) -> Result<String> {
     match rule.direction {
         ForwardDirection::Out => add_prefix(

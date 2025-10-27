@@ -11,12 +11,14 @@ use crate::BridgeError;
 use crate::config::BrokerConfig;
 use crate::error::Result;
 use crate::messages::{MqttCommand, MqttEvent};
+use crate::mqtt_utils::MqttMessage;
 use crate::mqtt_utils::client::create_mqtt_client;
 use crate::mqtt_utils::topic::MqttSubscription;
 
 pub struct MqttActor {
     client: Client,
     connection: Connection,
+    connected_msg: Option<MqttMessage>,
     subscriptions: Vec<MqttSubscription>,
     event_tx: Sender<MqttEvent>,
     cmd_rx: Receiver<MqttCommand>,
@@ -26,14 +28,16 @@ impl MqttActor {
     pub fn new(
         config: BrokerConfig,
         subscriptions: Vec<MqttSubscription>,
-        last_will: Option<LastWill>,
+        connected_msg: Option<MqttMessage>,
+        disconnected_lwt: Option<LastWill>,
         event_tx: Sender<MqttEvent>,
         cmd_rx: Receiver<MqttCommand>,
     ) -> Result<Self> {
-        let (client, connection) = create_mqtt_client(&config, last_will)?;
+        let (client, connection) = create_mqtt_client(&config, disconnected_lwt)?;
         Ok(Self {
             client,
             connection,
+            connected_msg,
             subscriptions,
             event_tx,
             cmd_rx,
@@ -87,6 +91,10 @@ impl MqttActor {
         match notification {
             Ok(Event::Incoming(Incoming::ConnAck(connack))) => {
                 debug!("Connected = {:?}", connack);
+                if let Some(msg) = &self.connected_msg {
+                    self.client
+                        .publish(&msg.topic, msg.qos, msg.retain, msg.payload.clone())?;
+                }
                 for subscription in &self.subscriptions {
                     self.client
                         .subscribe(&subscription.topic, subscription.qos)?;

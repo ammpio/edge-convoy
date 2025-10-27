@@ -78,8 +78,8 @@ pub mod cache;
 pub mod config;
 pub mod error;
 pub mod messages;
-pub mod tasks;
 pub mod mqtt_utils;
+pub mod tasks;
 
 // Re-export main types for convenient access
 pub use bridge::Bridge;
