@@ -1,5 +1,6 @@
 use crate::cache::CachedMessage;
 use crate::error::Result;
+use crate::mqtt_utils::MqttMessage;
 use flume::Sender;
 use rumqttc::QoS;
 
@@ -23,12 +24,7 @@ pub enum MqttCommand {
 pub enum MqttEvent {
     Connected,
     Disconnected,
-    MessageReceived {
-        topic: String,
-        payload: Vec<u8>,
-        qos: u8,
-        retain: bool,
-    },
+    Message(MqttMessage),
     Error(String),
 }
 

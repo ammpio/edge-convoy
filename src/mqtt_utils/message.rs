@@ -1,5 +1,6 @@
 use rumqttc::QoS;
 
+#[derive(Debug)]
 pub struct MqttMessage {
     pub topic: String,
     pub payload: Vec<u8>,

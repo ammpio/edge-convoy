@@ -102,8 +102,17 @@ impl MqttActor {
                 }
                 self.event_tx.send(MqttEvent::Connected)?;
             }
-            Ok(Event::Incoming(Incoming::Publish(publish))) => {
-                debug!("Publish = {:?}", publish);
+            Ok(Event::Incoming(Incoming::Publish(msg))) => {
+                debug!("Publish = {:?}", &msg);
+                let res = self.event_tx.send(MqttEvent::Message(MqttMessage {
+                    topic: msg.topic,
+                    payload: msg.payload.into(),
+                    qos: msg.qos,
+                    retain: msg.retain,
+                }));
+                if let Err(e) = res {
+                    error!("Failed to send message event: {}", e);
+                }
             }
             Ok(Event::Incoming(Incoming::Subscribe(subscribe))) => {
                 debug!("Subscribe = {:?}", subscribe);

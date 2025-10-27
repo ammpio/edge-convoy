@@ -3,7 +3,7 @@
 use std::thread;
 use std::time::Duration;
 
-use tracing::{debug, debug_span};
+use tracing::{debug, debug_span, trace};
 
 use crate::config::{BridgeConfig, CacheConfig, ForwardDirection};
 use crate::error::Result;
@@ -94,7 +94,14 @@ impl Bridge {
 
         // Run router task (blocks until shutdown)
         loop {
-            thread::sleep(Duration::from_secs(1));
+            for event in local_event_rx.drain() {
+                debug!("Local event: {:?}", event);
+            }
+            for event in remote_event_rx.drain() {
+                debug!("Remote event: {:?}", event);
+            }
+            trace!("Sleeping for 10 ms");
+            thread::sleep(Duration::from_millis(10));
         }
 
         Ok(())
