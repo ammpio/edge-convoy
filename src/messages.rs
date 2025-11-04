@@ -1,8 +1,10 @@
+use bytes::Bytes;
+use flume::Sender;
+use rumqttc::QoS;
+
 use crate::cache::CachedMessage;
 use crate::error::Result;
 use crate::mqtt_utils::MqttMessage;
-use flume::Sender;
-use rumqttc::QoS;
 
 // ============================================================================
 // MQTT Worker Messages
@@ -12,7 +14,7 @@ use rumqttc::QoS;
 pub enum MqttCommand {
     Publish {
         topic: String,
-        payload: Vec<u8>,
+        payload: Bytes,
         qos: QoS,
         retain: bool,
         /// Optional response channel for publish confirmation
@@ -35,8 +37,8 @@ pub enum MqttEvent {
 #[derive(Debug)]
 pub enum CacheCommand {
     Enqueue {
-        topic: Vec<u8>,
-        payload: Vec<u8>,
+        topic: Bytes,
+        payload: Bytes,
         qos: u8,
         retain: bool,
         response: Sender<Result<()>>,

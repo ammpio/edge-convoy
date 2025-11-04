@@ -50,6 +50,8 @@ native-tls = "0.2"
 # Time utilities
 chrono = "0.4"
 
+# Bytes for payloads
+bytes = "1"
 
 # Backoff for connection retry
 backoff = { version = "0.4", features = ["tokio"] }

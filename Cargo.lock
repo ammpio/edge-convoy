@@ -218,6 +218,7 @@ name = "convoy"
 version = "0.1.0"
 dependencies = [
  "backoff",
+ "bytes",
  "chrono",
  "clap",
  "flume",

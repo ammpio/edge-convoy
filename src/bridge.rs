@@ -3,10 +3,13 @@
 use std::thread;
 use std::time::Duration;
 
-use tracing::{debug, debug_span, trace};
+use bytes::Bytes;
+use rumqttc::QoS;
+use tracing::{debug, debug_span, error, trace};
 
 use crate::config::{BridgeConfig, CacheConfig, ForwardDirection};
 use crate::error::Result;
+use crate::messages::MqttCommand;
 use crate::mqtt_utils::state;
 use crate::mqtt_utils::topic::MqttSubscription;
 use crate::tasks::MqttActor;
@@ -91,6 +94,19 @@ impl Bridge {
             .unwrap()
             .run()
         });
+
+        // Publish test message to remote
+
+        let res = remote_cmd_tx.send(MqttCommand::Publish {
+            topic: "test/sensors/temp".to_string(),
+            payload: Bytes::from(b"23.5".to_vec()),
+            qos: QoS::AtLeastOnce,
+            retain: false,
+            response: None,
+        });
+        if let Err(e) = res {
+            error!("Failed to send test message to remote: {}", e);
+        }
 
         // Run router task (blocks until shutdown)
         loop {

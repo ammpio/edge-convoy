@@ -1,9 +1,10 @@
+use bytes::Bytes;
 use rumqttc::QoS;
 
 #[derive(Debug)]
 pub struct MqttMessage {
     pub topic: String,
-    pub payload: Vec<u8>,
+    pub payload: Bytes,
     pub qos: QoS,
     pub retain: bool,
 }

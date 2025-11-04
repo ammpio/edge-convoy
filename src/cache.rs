@@ -1,11 +1,14 @@
 #![allow(clippy::result_large_err)]
 
+use std::path::Path;
+
+use bytes::Bytes;
+use rusqlite::{Connection, params};
+use tracing::{debug, info, warn};
+
 use crate::config::{CacheConfig, EvictionPolicy, SynchronousMode};
 use crate::error::Result;
 use crate::mqtt_utils::payload_hash;
-use rusqlite::{Connection, params};
-use std::path::Path;
-use tracing::{debug, info, warn};
 
 /// A cached MQTT message awaiting delivery to the remote broker.
 ///
@@ -16,9 +19,9 @@ pub struct CachedMessage {
     /// Unique message ID (autoincrement)
     pub id: i64,
     /// MQTT topic as bytes
-    pub topic: Vec<u8>,
+    pub topic: Bytes,
     /// Message payload as bytes
-    pub payload: Vec<u8>,
+    pub payload: Bytes,
     /// QoS level (0, 1, or 2)
     pub qos: u8,
     /// Whether message should be retained
@@ -69,8 +72,8 @@ fn open_database(config: &CacheConfig) -> Result<Connection> {
 fn enqueue(
     conn: &Connection,
     config: &CacheConfig,
-    topic: &[u8],
-    payload: &[u8],
+    topic: &Bytes,
+    payload: &Bytes,
     qos: u8,
     retain: bool,
 ) -> Result<()> {
@@ -113,7 +116,7 @@ fn enqueue(
     conn.execute(
         "INSERT INTO messages (topic, payload, qos, retain, ts_enqueued)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![topic, payload, qos, retain, ts_enqueued],
+        params![topic.as_ref(), payload.as_ref(), qos, retain, ts_enqueued],
     )?;
 
     info!(
@@ -140,8 +143,8 @@ fn dequeue_batch(conn: &Connection, limit: usize) -> Result<Vec<CachedMessage>> 
         .query_map([limit], |row| {
             Ok(CachedMessage {
                 id: row.get(0)?,
-                topic: row.get(1)?,
-                payload: row.get(2)?,
+                topic: Bytes::from(row.get::<_, Vec<u8>>(1)?),
+                payload: Bytes::from(row.get::<_, Vec<u8>>(2)?),
                 qos: row.get(3)?,
                 retain: row.get::<_, i32>(4)? != 0,
                 ts_enqueued: row.get(5)?,
