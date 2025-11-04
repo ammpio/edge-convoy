@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use rumqttc::{LastWill, QoS};
 
 use crate::mqtt_utils::MqttMessage;
@@ -5,7 +6,7 @@ use crate::mqtt_utils::MqttMessage;
 pub fn connected_msg(state_topic: &str, state_online_payload: &str) -> MqttMessage {
     MqttMessage {
         topic: state_topic.into(),
-        payload: state_online_payload.into(),
+        payload: Bytes::from(state_online_payload.to_string()),
         qos: QoS::AtLeastOnce,
         retain: true,
     }
